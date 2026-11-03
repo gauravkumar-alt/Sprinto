@@ -37,6 +37,10 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/companies/${id}`, { cache: "no-store" });
+    if (res.status === 401) {
+      window.location.href = `/login?next=/companies/${id}`;
+      return;
+    }
     if (!res.ok) return setErr(res.status === 404 ? "Company not found" : `HTTP ${res.status}`);
     setD(await res.json());
   }, [id]);

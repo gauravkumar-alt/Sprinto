@@ -62,6 +62,10 @@ export default function Dashboard() {
   const load = useCallback(async () => {
     try {
       const res = await fetch("/api/status", { cache: "no-store" });
+      if (res.status === 401) {
+        window.location.href = "/login";
+        return;
+      }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setData(await res.json());
       setLoadError(null);
@@ -128,6 +132,16 @@ export default function Dashboard() {
             <ProviderChip label="Search" {...p.search} />
             <ProviderChip label="Hunter" {...p.hunter} />
             <ProviderChip label="Gmail" {...p.gmail} />
+            <button
+              className="btn btn-sm"
+              title="Sign out (only relevant when a password is set)"
+              onClick={async () => {
+                await fetch("/api/session", { method: "DELETE", headers: { "content-type": "application/json" } });
+                window.location.href = "/login";
+              }}
+            >
+              Sign out
+            </button>
           </div>
         )}
       </header>
