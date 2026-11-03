@@ -180,12 +180,11 @@ Only a Gmail-confirmed response (with a message id) is recorded as **Sent**. Net
 
 ---
 
-## Sharing a public link (tunnel from your Mac)
+## Sharing a public, view-only link (tunnel from your Mac)
 The app runs as a long-lived local server with a SQLite file and background jobs, so it is shared through a tunnel rather than a serverless host:
 
 ```bash
 # 1. in .env.local
-APP_PASSWORD=<choose a password>        # required: remote hosts are refused without it
 ALLOWED_HOSTS=*.trycloudflare.com
 
 # 2. build and start (terminal 1)
@@ -194,7 +193,7 @@ npm run build && npm start -- -p 3123
 # 3. open a tunnel (terminal 2) — prints https://<random>.trycloudflare.com
 cloudflared tunnel --no-autoupdate --url http://127.0.0.1:3123
 ```
-Everyone (you included) signs in at `/login`; sessions last 12 hours and end when `APP_PASSWORD` changes. The link works only while both commands run and your Mac is awake, and a quick tunnel gets a new random address each time it starts. Gmail authorisation (`Connect Gmail`) should still be done from `http://localhost:3123`, the redirect URI registered with Google.
+There is no sign-in. Through the shared link the app is **view-only**: anyone with the link can browse the dashboard, research, evidence, contacts, pain points and emails (email addresses are partly masked), but every write — running the agent, adding contacts, approving, (re)sending, Gmail authorisation — is refused and only works on `http://localhost:3123`. The link works only while both commands run and your Mac is awake, and a quick tunnel gets a new random address each time it starts.
 
 ## Security hardening (local app)
 - The server binds to `127.0.0.1` only (`npm run dev` / `npm start`).

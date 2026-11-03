@@ -37,10 +37,6 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/companies/${id}`, { cache: "no-store" });
-    if (res.status === 401) {
-      window.location.href = `/login?next=/companies/${id}`;
-      return;
-    }
     if (!res.ok) return setErr(res.status === 404 ? "Company not found" : `HTTP ${res.status}`);
     setD(await res.json());
   }, [id]);
@@ -95,14 +91,14 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
             {isMock ? c.domain : <a href={`https://${c.domain}`} target="_blank" rel="noreferrer noopener">{c.domain} ↗</a>} · last updated {fmt(c.updated_at)}
           </div>
         </div>
-        <div className="row">
+        {!d.readOnly && <div className="row">
           <button className="btn btn-sm" disabled={running} onClick={() => act({ action: "retry" }, "Re-running the full pipeline…")}>Re-run pipeline</button>
           {email && ["failed", "validated"].includes(email.status) && (
             <button className="btn btn-sm" disabled={running} onClick={() => act({ action: "retry_send", confirmUnknownOutcome: send?.status === "outcome_unknown" ? confirm("The last send attempt has an UNKNOWN outcome. Check your inbox first. Send again anyway?") : false }, "Send retried")}>
               Retry send
             </button>
           )}
-        </div>
+        </div>}
       </header>
 
       {isMock && <div className="notice n-mock" style={{ marginBottom: 12 }}><b>MOCK DATA.</b> This company, its website, people and analysis come from mock providers. Nothing here is real research.</div>}
@@ -192,7 +188,7 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
                 ))}
               </div>
             )}
-            {q.decision === "needs_review" && !running && (
+            {q.decision === "needs_review" && !running && !d.readOnly && (
               <ApproveForm onSubmit={(note) => act({ action: "approve", note }, "Approved — resuming from contact discovery…")} />
             )}
           </>
@@ -249,12 +245,12 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
             </table>
           </details>
         )}
-        {c.current_status === "contact_not_found" && q?.decision === "qualified" && !running && (
+        {c.current_status === "contact_not_found" && q?.decision === "qualified" && !running && !d.readOnly && (
           <button className="btn btn-sm" style={{ marginTop: 10, marginRight: 8 }} onClick={() => act({ action: "resume" }, "Resuming from contact discovery…")}>
             Retry contact discovery
           </button>
         )}
-        {(q?.decision === "qualified" || c.current_status === "contact_not_found") && !running && <ManualContact domain={c.domain} onSubmit={(b) => act({ action: "manual_contact", ...b }, "Contact saved — resuming from contact stage…")} />}
+        {(q?.decision === "qualified" || c.current_status === "contact_not_found") && !running && !d.readOnly && <ManualContact domain={c.domain} onSubmit={(b) => act({ action: "manual_contact", ...b }, "Contact saved — resuming from contact stage…")} />}
       </section>
 
       {/* E — Pain points */}

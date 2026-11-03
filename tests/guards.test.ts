@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { NextRequest } from "next/server";
 import { afterEach } from "vitest";
 import { hostAllowed, middleware } from "@/middleware";
-import { SESSION_COOKIE, createSessionToken, verifySessionToken } from "@/lib/session";
+import { maskEmails, maskPayload } from "@/lib/viewer";
 import * as cheerio from "cheerio";
 import { embeddedSentences, extractHtml } from "@/lib/providers/research/html";
 import { scoreUrl } from "@/lib/providers/research/prioritize";
@@ -34,40 +34,34 @@ describe("API request guard", () => {
   });
 });
 
-describe("password sign-in for remote access", () => {
+describe("shared link is view-only (no sign-in)", () => {
   afterEach(() => {
-    delete process.env.APP_PASSWORD;
     delete process.env.ALLOWED_HOSTS;
   });
   const tunnel = "https://abc.trycloudflare.com";
+  const remote = { host: "abc.trycloudflare.com", origin: tunnel, "content-type": "application/json" };
 
-  it("refuses non-local hosts entirely when no password is set", async () => {
+  it("lets anyone read through an allowed tunnel host without signing in", async () => {
     process.env.ALLOWED_HOSTS = "*.trycloudflare.com";
-    expect((await middleware(req("GET", { host: "abc.trycloudflare.com" }, `${tunnel}/`))).status).toBe(403);
+    expect((await middleware(req("GET", { host: remote.host }, `${tunnel}/api/status`))).status).toBe(200);
+    expect((await middleware(req("GET", { host: remote.host }, `${tunnel}/api/companies/3`))).status).toBe(200);
   });
 
-  it("requires a valid session for pages and APIs, but not for /login", async () => {
+  it("blocks every write and Gmail authorisation through the shared link", async () => {
     process.env.ALLOWED_HOSTS = "*.trycloudflare.com";
-    process.env.APP_PASSWORD = "correct horse battery staple";
-    const page = await middleware(req("GET", { host: "abc.trycloudflare.com" }, `${tunnel}/companies/3`));
-    expect(page.status).toBe(307);
-    expect(page.headers.get("location")).toContain("/login?next=%2Fcompanies%2F3");
-    const viaTunnel = await middleware(req("GET", { host: "abc.trycloudflare.com", "x-forwarded-proto": "https" }, "http://127.0.0.1:3123/"));
-    expect(viaTunnel.headers.get("location")).toBe("https://abc.trycloudflare.com/login");
-    expect((await middleware(req("GET", { host: "abc.trycloudflare.com" }, `${tunnel}/api/status`))).status).toBe(401);
-    expect((await middleware(req("GET", { host: "abc.trycloudflare.com" }, `${tunnel}/login`))).status).toBe(200);
-
-    const token = await createSessionToken(process.env.APP_PASSWORD);
-    const authed = { host: "abc.trycloudflare.com", cookie: `${SESSION_COOKIE}=${token}` };
-    expect((await middleware(req("GET", authed, `${tunnel}/api/status`))).status).toBe(200);
-    expect((await middleware(req("GET", { ...authed, cookie: `${SESSION_COOKIE}=${token}x` }, `${tunnel}/api/status`))).status).toBe(401);
+    expect((await middleware(req("POST", remote, `${tunnel}/api/batches`))).status).toBe(403);
+    expect((await middleware(req("POST", remote, `${tunnel}/api/companies/3/actions`))).status).toBe(403);
+    expect((await middleware(req("GET", { host: remote.host }, `${tunnel}/api/auth/gmail/start`))).status).toBe(403);
   });
 
-  it("session tokens expire and are bound to the password", async () => {
-    const t = await createSessionToken("pw1", 0);
-    expect(await verifySessionToken(t, "pw1", 1000)).toBe(true);
-    expect(await verifySessionToken(t, "pw2", 1000)).toBe(false);
-    expect(await verifySessionToken(t, "pw1", 13 * 3600 * 1000)).toBe(false);
+  it("still allows writes from localhost (same-origin JSON)", async () => {
+    const local = { host: "localhost:3123", origin: "http://localhost:3123", "content-type": "application/json" };
+    expect((await middleware(req("POST", local, "http://localhost:3123/api/batches"))).status).toBe(200);
+  });
+
+  it("masks email addresses for remote viewers", () => {
+    expect(maskEmails("Delivers only to gaurav_kumar@pg27.mesaschool.co")).toBe("Delivers only to g•••@pg27.mesaschool.co");
+    expect(maskPayload({ a: ["jane@acme.com"], b: { c: "x" } })).toEqual({ a: ["j•••@acme.com"], b: { c: "x" } });
   });
 });
 

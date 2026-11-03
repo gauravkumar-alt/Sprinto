@@ -29,6 +29,7 @@ type Status = {
     llmCalls: number;
   };
   batches: { id: number; status: string; domain_count: number; done: number; created_at: string }[];
+  readOnly: boolean;
   companies: {
     id: number;
     domain: string;
@@ -62,10 +63,6 @@ export default function Dashboard() {
   const load = useCallback(async () => {
     try {
       const res = await fetch("/api/status", { cache: "no-store" });
-      if (res.status === 401) {
-        window.location.href = "/login";
-        return;
-      }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setData(await res.json());
       setLoadError(null);
@@ -132,23 +129,13 @@ export default function Dashboard() {
             <ProviderChip label="Search" {...p.search} />
             <ProviderChip label="Hunter" {...p.hunter} />
             <ProviderChip label="Gmail" {...p.gmail} />
-            <button
-              className="btn btn-sm"
-              title="Sign out (only relevant when a password is set)"
-              onClick={async () => {
-                await fetch("/api/session", { method: "DELETE", headers: { "content-type": "application/json" } });
-                window.location.href = "/login";
-              }}
-            >
-              Sign out
-            </button>
           </div>
         )}
       </header>
 
       {loadError && <div className="notice n-bad" style={{ marginBottom: 12 }}>Could not load dashboard data: {loadError}</div>}
 
-      {p && (p.llm.state !== "real" || p.gmail.state !== "real") && (
+      {p && !data?.readOnly && (p.llm.state !== "real" || p.gmail.state !== "real") && (
         <div className="notice n-mock" style={{ marginBottom: 16 }}>
           <b>Setup status.</b>{" "}
           {p.llm.state !== "real" && <>No LLM key is configured, so analysis uses a keyword-based <b>MOCK</b> model (results are labelled MOCK). </>}
@@ -171,6 +158,15 @@ export default function Dashboard() {
       </section>
 
       <div className="grid-2">
+        {data?.readOnly ? (
+          <section className="panel">
+            <h2>View-only link</h2>
+            <p className="sub" style={{ marginBottom: 0 }}>
+              You are viewing a shared, read-only copy of this outreach agent. You can explore every company&apos;s research, evidence,
+              qualification, decision-maker, pain points and email. Running the agent is only possible on the computer it runs on.
+            </p>
+          </section>
+        ) : (
         <section className="panel">
           <div className="panel-head">
             <h2>Company domains</h2>
@@ -239,6 +235,7 @@ export default function Dashboard() {
             Emails are addressed to the identified prospect by name but are delivered <b>only to {p?.demoInbox ?? "your own inbox (DEMO_INBOX_EMAIL)"}</b>. Prospects are never contacted.
           </p>
         </section>
+        )}
 
         <section className="panel">
           <div className="panel-head">
@@ -246,7 +243,7 @@ export default function Dashboard() {
             {running ? <span className="badge b-info">Running · {m?.running} active</span> : <span className="sub">{batchId ? `Batch #${batchId}` : "Idle"}</span>}
           </div>
           {progress.length === 0 ? (
-            <div className="empty">Enter domains and run the agent to see each stage execute here.</div>
+            <div className="empty">{data?.readOnly ? "No agent run in progress." : "Enter domains and run the agent to see each stage execute here."}</div>
           ) : (
             progress.map((c) => (
               <div key={c.id} className="progress-card">
