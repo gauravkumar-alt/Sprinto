@@ -1,0 +1,22 @@
+node_modules/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+next-env.d.ts
+
+# secrets — never commit
+.env
+.env.*
+!.env.example
+*.pem
+credentials*.json
+client_secret*.json
+
+# local database (contains research, contacts, OAuth refresh token)
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+.DS_Store
