@@ -158,7 +158,7 @@ DEMO_INBOX_EMAIL=you@gmail.com
 ## Testing
 
 ```bash
-npm test            # vitest: 69 tests
+npm test            # vitest: 70 tests
 npm run typecheck
 npm run lint
 npm run build

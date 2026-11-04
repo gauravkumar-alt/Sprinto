@@ -133,20 +133,20 @@ export function computeScore(e: Pick<EnforcedClassification, "saas" | "stage" | 
 }
 
 const LABEL = {
-  saas: { confirmed: "Confirmed SaaS", likely: "Likely SaaS (inferred)", not_saas: "Not SaaS", unknown: "SaaS status unknown" },
-  stage: { series_a_c: "Verified Series A–C", growth_indicators: "Growth indicators, stage unverified", other_verified: "Other verified stage", unknown: "Stage unknown" },
+  saas: { confirmed: "Confirmed SaaS", likely: "Likely SaaS", not_saas: "Not SaaS", unknown: "SaaS status unknown" },
+  stage: { series_a_c: "Verified Series A–C", growth_indicators: "Growing, stage unknown", other_verified: "Other verified stage", unknown: "Stage unknown" },
   audit: {
-    active_or_planned: "Actively preparing for / planning an audit or certification",
-    initiative_timing_uncertain: "Clear compliance initiative, timing uncertain",
-    already_certified: "Already certified (no new audit stated)",
-    generic_material: "Generic security/compliance material only",
-    none: "No audit/compliance evidence",
+    active_or_planned: "Preparing for an audit",
+    initiative_timing_uncertain: "Compliance work underway, no date",
+    already_certified: "Already certified",
+    generic_material: "Generic security wording only",
+    none: "No audit evidence",
   },
   enterprise: {
-    direct_requirement: "Customers/procurement explicitly require certification",
-    security_reviews: "Documented security questionnaires / reviews",
-    enterprise_positioning: "Enterprise positioning, no demonstrated compliance pressure",
-    none: "No enterprise-pressure evidence",
+    direct_requirement: "Customers require certification",
+    security_reviews: "Facing security reviews",
+    enterprise_positioning: "Enterprise focus, no pressure shown",
+    none: "No enterprise pressure",
   },
 } as const;
 export const LEVEL_LABELS = LABEL;
@@ -175,31 +175,31 @@ export function decideQualification(params: {
   let explanation: string;
   if (params.noUsableEvidence) {
     decision = "needs_review";
-    explanation = "No usable public evidence could be collected, so the company cannot be assessed automatically.";
+    explanation = "No usable public information found.";
   } else if (e.outsideTarget.flag) {
     decision = "not_qualified";
-    explanation = `Outside the target market: ${e.outsideTarget.reason || "see evidence"}.`;
+    explanation = `Outside target: ${e.outsideTarget.reason || "see evidence"}.`;
   } else if (e.saas === "not_saas") {
     decision = "not_qualified";
-    explanation = "Evidence shows the core business is not a SaaS product, so it is outside Sprinto's ICP.";
+    explanation = "Not a SaaS business.";
   } else if (saasOk && hasTrigger) {
     decision = "qualified";
     const trig = [auditTrigger ? LABEL.audit[e.audit].toLowerCase() : null, entTrigger ? LABEL.enterprise[e.enterprise].toLowerCase() : null]
       .filter(Boolean)
       .join(" and ");
-    explanation = `Confirmed SaaS company with a credible buying trigger: ${trig}.${e.stage === "unknown" ? " Funding stage is unknown, which lowers the score but is not a disqualifier." : ""}`;
+    explanation = `SaaS company ${trig}.`;
   } else if (params.canResearchMore && (e.saas === "unknown" || !hasTrigger || (e.saas === "likely" && hasTrigger))) {
     decision = "research_more";
-    explanation = "Critical information is missing; running another bounded research round.";
+    explanation = "Key facts missing — researching further.";
   } else if (e.saas === "likely" && hasTrigger) {
     decision = "needs_review";
-    explanation = "A buying trigger exists, but the SaaS business model is only inferred, not confirmed. A human should confirm before outreach.";
+    explanation = "Has a buying trigger, but SaaS model unconfirmed.";
   } else if (e.saas === "unknown") {
     decision = "needs_review";
-    explanation = "Could not establish whether the company sells a SaaS product.";
+    explanation = "Couldn't confirm it sells SaaS.";
   } else {
     decision = "needs_review";
-    explanation = `Appears to fit the SaaS profile, but no credible buying trigger (audit preparation or enterprise certification pressure) was found${total >= 50 ? ` despite a score of ${total}` : ""}. Saved for human review rather than guessed.`;
+    explanation = "SaaS, but no audit or enterprise trigger found.";
   }
 
   const evidenceIds = [...new Set([...e.evidence.saas, ...e.evidence.stage, ...e.evidence.audit, ...e.evidence.enterprise])];
@@ -231,11 +231,11 @@ export function finalizeUnresolved(r: QualificationResult, roundsRun: number): Q
   if (r.decision !== "research_more") return r;
   const after = roundsRun ? ` after ${roundsRun} extra research round${roundsRun > 1 ? "s" : ""}` : "";
   let explanation: string;
-  if (r.saas_status === "unknown") explanation = `Could not establish whether the company sells a SaaS product${after}.`;
+  if (r.saas_status === "unknown") explanation = `Couldn't confirm it sells SaaS${after}.`;
   else if (r.saas_status === "likely" && r.has_buying_trigger)
-    explanation = `A buying trigger exists, but the SaaS business model is only inferred, not confirmed${after}. A human should confirm before outreach.`;
+    explanation = `Has a buying trigger, but SaaS model unconfirmed${after}.`;
   else
-    explanation = `Appears to fit the SaaS profile, but no credible buying trigger (audit preparation or enterprise certification pressure) was found${after}. Saved for human review rather than guessed.`;
+    explanation = `SaaS, but no audit or enterprise trigger found${after}.`;
   return { ...r, decision: "needs_review", explanation };
 }
 

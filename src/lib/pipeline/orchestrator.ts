@@ -555,11 +555,11 @@ export async function processCompany(runId: number, opts: ProcessOptions = {}): 
         }
         const r = await storePagesAndCollectEvidence(ctx, crawl.pages, 0, []);
         ctx.evidence = r.added;
-        const warn = r.injectionFlags.length || r.modelFlaggedInjection ? " · ⚠ instruction-like text found on site (ignored)" : "";
+        const warn = r.injectionFlags.length || r.modelFlaggedInjection ? " · ⚠ injected instructions ignored" : "";
         repo.stageEnd(
           eventId,
           "completed",
-          `${crawl.pages.length} pages read · ${r.added.length} verified evidence items${r.discarded ? ` · ${r.discarded} unverifiable discarded` : ""}${warn}`,
+          `${crawl.pages.length} pages · ${r.added.length} facts${r.discarded ? ` · ${r.discarded} unverifiable dropped` : ""}${warn}`,
           { log: crawl.log, discardedEvidence: r.discarded, injectionFlags: r.injectionFlags, modelFlaggedInjection: r.modelFlaggedInjection },
         );
       }
@@ -645,7 +645,7 @@ export async function processCompany(runId: number, opts: ProcessOptions = {}): 
       pp = checkPainPoints(await runPrompt(ctx.llm, painPointPrompt, ppInput, { agentRunId: runId }), known); // one bounded retry
     }
     if (!pp.ok) {
-      repo.stageEnd(eventId, "needs_review", "Not enough evidence for two credible pain points", { problems: pp.problems, draft: pp.painPoints });
+      repo.stageEnd(eventId, "needs_review", "Too little evidence for two pain points", { problems: pp.problems, draft: pp.painPoints });
       eventId = 0;
       skipRest("pain_points", "Stopped: pain points need human review");
       outcome = "needs_review";
@@ -654,7 +654,8 @@ export async function processCompany(runId: number, opts: ProcessOptions = {}): 
       return outcome;
     }
     repo.insertPainPoints(ctx.companyId, runId, contact.id, pp.painPoints);
-    repo.stageEnd(eventId, "completed", pp.painPoints.map((p, i) => `${i + 1}. ${truncate(p.statement, 70)}`).join("  "));
+    const evidenced = pp.painPoints.filter((p) => p.type === "direct").length;
+    repo.stageEnd(eventId, "completed", `2 pain points · ${evidenced} evidenced, ${2 - evidenced} inferred`);
 
     // ── 6. Email generation + validation ──
     current = "email";
@@ -683,7 +684,7 @@ export async function processCompany(runId: number, opts: ProcessOptions = {}): 
       dataSource,
     });
     if (!emailRes.passed) {
-      repo.stageEnd(eventId, "needs_review", `Failed validation after ${emailRes.history.length} attempts — not sent`, { history: emailRes.history });
+      repo.stageEnd(eventId, "needs_review", `Failed validation (${emailRes.history.length} tries) · not sent`, { history: emailRes.history });
       eventId = 0;
       repo.stageSkip(runId, "send", "Not sent: email failed validation");
       outcome = "email_needs_review";
@@ -691,7 +692,7 @@ export async function processCompany(runId: number, opts: ProcessOptions = {}): 
       repo.finishRun(runId, "completed", outcome, startedMs);
       return outcome;
     }
-    repo.stageEnd(eventId, "completed", `Validated (PASS) after ${emailRes.history.length} attempt${emailRes.history.length > 1 ? "s" : ""} · "${truncate(emailRes.email.subject, 60)}"`, { history: emailRes.history });
+    repo.stageEnd(eventId, "completed", `Validated · ${emailRes.history.length} attempt${emailRes.history.length > 1 ? "s" : ""}`, { history: emailRes.history });
 
     // ── 7. Send (own inbox only) ──
     current = "send";

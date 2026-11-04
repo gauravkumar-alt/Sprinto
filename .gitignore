@@ -1,5 +1,6 @@
 node_modules/
 .next/
+.next-dev/
 out/
 coverage/
 *.tsbuildinfo
@@ -20,3 +21,6 @@ data/
 *.db-wal
 *.db-shm
 .DS_Store
+
+# local editor/agent settings
+.claude/

@@ -47,11 +47,12 @@ function stagesFor(runId: number): (StageEventRow & { reused: boolean })[] {
   const earlier = db.prepare(
     `SELECT se.agent_run_id, se.stage, se.status, se.summary, se.detail_json, se.error, se.started_at, se.completed_at
      FROM stage_events se JOIN agent_runs ar ON ar.id = se.agent_run_id
-     WHERE ar.company_id = ? AND se.agent_run_id < ? AND se.stage = ? AND NOT (se.status = 'skipped' AND se.summary LIKE 'Reused%')
-     ORDER BY se.id DESC LIMIT 1`,
+     WHERE ar.company_id = ? AND se.agent_run_id < ? AND se.stage = ?
+       AND NOT (se.status = 'skipped' AND (se.summary LIKE 'Reused%' OR se.summary LIKE 'Duplicate prevented%'))
+     ORDER BY (se.status = 'completed') DESC, se.id DESC LIMIT 1`,
   );
   return [...by.values()].map((r) => {
-    if (companyId && r.status === "skipped" && r.summary?.startsWith("Reused")) {
+    if (companyId && r.status === "skipped" && (r.summary?.startsWith("Reused") || r.summary?.startsWith("Duplicate prevented"))) {
       const real = earlier.get(companyId, runId, r.stage) as StageEventRow | undefined;
       if (real) return { ...real, reused: true };
     }
@@ -91,6 +92,7 @@ export function listCompanies() {
       score: q?.score ?? null,
       decision: q?.decision ?? null,
       reason: qr?.explanation ?? null,
+      signals: qr ? { saas: qr.saas_status, audit: qr.audit_trigger, enterprise: qr.enterprise_pressure } : null,
       contactName: contact?.name ?? null,
       contactTitle: contact?.title ?? null,
       painPoint1: pps[0]?.statement ?? null,

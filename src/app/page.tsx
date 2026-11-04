@@ -2,53 +2,49 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ProviderChip, SourceBadge, StageList, StatusBadge, postJson, type StageRow } from "@/components/ui";
+import { Meter, Pips, ProviderChip, SourceBadge, StatusBadge, ThemeToggle, currentStepLabel, postJson, tone, type StageRow } from "@/components/ui";
 import { parseDomainCsv, parseDomainList } from "@/lib/security/domain";
 
+type Provider = { state: string; detail: string };
+type Company = {
+  id: number;
+  domain: string;
+  name: string | null;
+  status: string;
+  dataSource: string;
+  score: number | null;
+  decision: string | null;
+  reason: string | null;
+  signals: { saas: string; audit: string; enterprise: string } | null;
+  contactName: string | null;
+  contactTitle: string | null;
+  painPoint1: string | null;
+  painPoint2: string | null;
+  emailStatus: string | null;
+  run: { id: number; status: string; batchId: number | null; stages: StageRow[] } | null;
+};
 type Status = {
-  providers: {
-    mode: "demo" | "live";
-    llm: { state: string; detail: string };
-    research: { state: string; detail: string };
-    search: { state: string; detail: string };
-    hunter: { state: string; detail: string };
-    gmail: { state: string; detail: string };
-    demoInbox: string | null;
-    canAuthorizeGmail: boolean;
-  };
-  metrics: {
-    totalCompanies: number;
-    qualified: number;
-    notQualified: number;
-    needsReview: number;
-    emailsGenerated: number;
-    emailsSent: number;
-    emailsSimulated: number;
-    running: number;
-    llmCostUsd: number;
-    llmCalls: number;
-  };
-  batches: { id: number; status: string; domain_count: number; done: number; created_at: string }[];
+  providers: { mode: "demo" | "live"; llm: Provider; research: Provider; search: Provider; hunter: Provider; gmail: Provider; demoInbox: string | null; canAuthorizeGmail: boolean };
+  metrics: { totalCompanies: number; qualified: number; notQualified: number; needsReview: number; emailsGenerated: number; emailsSent: number; emailsSimulated: number; running: number; llmCostUsd: number; llmCalls: number };
+  batches: { id: number }[];
+  companies: Company[];
   readOnly: boolean;
-  companies: {
-    id: number;
-    domain: string;
-    name: string | null;
-    status: string;
-    dataSource: string;
-    score: number | null;
-    decision: string | null;
-    reason: string | null;
-    contactName: string | null;
-    contactTitle: string | null;
-    painPoint1: string | null;
-    painPoint2: string | null;
-    emailStatus: string | null;
-    run: { id: number; status: string; batchId: number | null; stages: StageRow[] } | null;
-  }[];
 };
 
 const MOCK_DEMO = "vaultlane.example\nledgerly.example\nnorthpeak-consulting.example\norbitboard.example\npromptbait.example";
+
+/** Two-to-three word reason for the results table; the full explanation is the tooltip. */
+function shortReason(c: Company): string {
+  const s = c.signals;
+  if (!s) return "—";
+  const audit = ["active_or_planned", "initiative_timing_uncertain"].includes(s.audit);
+  const ent = ["direct_requirement", "security_reviews"].includes(s.enterprise);
+  if (c.decision === "qualified") return audit && ent ? "Audit + enterprise" : audit ? "Audit prep" : ent ? "Enterprise pressure" : "Reviewer approved";
+  if (c.decision === "not_qualified") return s.saas === "not_saas" ? "Not SaaS" : "Outside target";
+  if (s.audit === "already_certified") return "Already certified";
+  if (s.saas !== "confirmed") return "SaaS unclear";
+  return "No buying trigger";
+}
 
 export default function Dashboard() {
   const router = useRouter();
@@ -57,7 +53,7 @@ export default function Dashboard() {
   const [text, setText] = useState("");
   const [csv, setCsv] = useState<{ name: string; content: string } | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [submitMsg, setSubmitMsg] = useState<{ kind: "info" | "bad"; text: string } | null>(null);
+  const [msg, setMsg] = useState<{ kind: "info" | "bad"; text: string } | null>(null);
   const [activeBatch, setActiveBatch] = useState<number | null>(null);
 
   const load = useCallback(async () => {
@@ -89,19 +85,16 @@ export default function Dashboard() {
 
   async function run() {
     setSubmitting(true);
-    setSubmitMsg(null);
+    setMsg(null);
     try {
-      const r = await postJson<{ batchId: number; accepted: string[]; invalid: { input: string; reason: string }[]; duplicates: string[] }>("/api/batches", {
-        domains: text.trim() || undefined,
-        csv: csv?.content,
-      });
+      const r = await postJson<{ batchId: number; accepted: string[] }>("/api/batches", { domains: text.trim() || undefined, csv: csv?.content });
       setActiveBatch(r.batchId);
-      setSubmitMsg({ kind: "info", text: `Agent started on ${r.accepted.length} compan${r.accepted.length === 1 ? "y" : "ies"}.${r.invalid.length ? ` ${r.invalid.length} invalid skipped.` : ""}${r.duplicates.length ? ` ${r.duplicates.length} duplicates removed.` : ""}` });
+      setMsg({ kind: "info", text: `Running on ${r.accepted.length} compan${r.accepted.length === 1 ? "y" : "ies"}.` });
       setText("");
       setCsv(null);
       load();
     } catch (e) {
-      setSubmitMsg({ kind: "bad", text: (e as Error).message });
+      setMsg({ kind: "bad", text: (e as Error).message });
     } finally {
       setSubmitting(false);
     }
@@ -111,6 +104,7 @@ export default function Dashboard() {
   const m = data?.metrics;
   const batchId = activeBatch ?? data?.batches[0]?.id ?? null;
   const progress = (data?.companies ?? []).filter((c) => c.run && (c.run.batchId === batchId || c.run.status === "running" || c.run.status === "queued"));
+  const anyMock = p && [p.llm.state, p.gmail.state].includes("mock");
 
   return (
     <div className="shell">
@@ -119,143 +113,126 @@ export default function Dashboard() {
           <div className="logo">S</div>
           <div>
             <h1>Sprinto Outreach Agent</h1>
-            <div className="sub">Domains in → research → ICP qualification → decision-maker → 2 pain points → personalised email → your inbox</div>
+            <div className="sub">Research → Qualify → Contact → Email</div>
           </div>
         </div>
-        {p && (
-          <div className="chips">
-            <span className={`badge ${p.mode === "demo" ? "b-mock" : "b-real"}`}>{p.mode === "demo" ? "DEMO MODE" : "LIVE MODE"}</span>
-            <ProviderChip label="LLM" {...p.llm} />
-            <ProviderChip label="Search" {...p.search} />
-            <ProviderChip label="Hunter" {...p.hunter} />
-            <ProviderChip label="Gmail" {...p.gmail} />
-          </div>
-        )}
+        <div className="chips">
+          {p && (
+            <>
+              {data?.readOnly && <span className="badge b-mute">View only</span>}
+              <ProviderChip label={p.llm.state === "real" ? p.llm.detail.split(" · ")[0].replace(/^./, (s) => s.toUpperCase()) : "AI"} {...p.llm} />
+              <ProviderChip label="Hunter" {...p.hunter} />
+              <ProviderChip label="Gmail" {...p.gmail} />
+            </>
+          )}
+          <ThemeToggle />
+        </div>
       </header>
 
-      {loadError && <div className="notice n-bad" style={{ marginBottom: 12 }}>Could not load dashboard data: {loadError}</div>}
-
-      {p && !data?.readOnly && (p.llm.state !== "real" || p.gmail.state !== "real") && (
+      {loadError && <div className="notice n-bad" style={{ marginBottom: 12 }}>Couldn&apos;t load data ({loadError}).</div>}
+      {p && anyMock && !data?.readOnly && (
         <div className="notice n-mock" style={{ marginBottom: 16 }}>
-          <b>Setup status.</b>{" "}
-          {p.llm.state !== "real" && <>No LLM key is configured, so analysis uses a keyword-based <b>MOCK</b> model (results are labelled MOCK). </>}
+          {p.llm.state !== "real" && <>Mock AI in use. </>}
           {p.gmail.state !== "real" && (
             <>
-              Gmail is not connected, so deliveries are <b>SIMULATED</b> — nothing is sent.{" "}
-              {p.canAuthorizeGmail ? <a href="/api/auth/gmail/start">Connect Gmail for {p.demoInbox} →</a> : "See README → Gmail setup."}
+              Gmail not connected — sends are simulated.{" "}
+              {p.canAuthorizeGmail && <a href="/api/auth/gmail/start">Connect Gmail</a>}
             </>
           )}
         </div>
       )}
 
       <section className="metrics">
-        <Metric label="Total companies" value={m?.totalCompanies} />
+        <Metric label="Companies" value={m?.totalCompanies} />
         <Metric label="Qualified" value={m?.qualified} />
         <Metric label="Not qualified" value={m?.notQualified} />
         <Metric label="Needs review" value={m?.needsReview} />
-        <Metric label="Emails generated" value={m?.emailsGenerated} />
-        <Metric label="Sent to my inbox" value={m?.emailsSent} hint={m && m.emailsSimulated ? `+${m.emailsSimulated} simulated` : p?.demoInbox ?? undefined} />
+        <Metric label="Emails written" value={m?.emailsGenerated} />
+        <Metric label="Sent to inbox" value={m?.emailsSent} hint={m?.emailsSimulated ? `+${m.emailsSimulated} simulated` : undefined} accent />
       </section>
 
       <div className="grid-2">
         {data?.readOnly ? (
           <section className="panel">
-            <h2>View-only link</h2>
-            <p className="sub" style={{ marginBottom: 0 }}>
-              You are viewing a shared, read-only copy of this outreach agent. You can explore every company&apos;s research, evidence,
-              qualification, decision-maker, pain points and email. Running the agent is only possible on the computer it runs on.
-            </p>
+            <h2>Shared view</h2>
+            <p className="sub" style={{ margin: "6px 0 0" }}>Browse each company&apos;s research, contact and email. Runs happen on the host machine.</p>
           </section>
         ) : (
-        <section className="panel">
-          <div className="panel-head">
-            <h2>Company domains</h2>
-            {p?.mode === "demo" && (
-              <button className="btn btn-sm" onClick={() => setText(MOCK_DEMO)} title="Fictional .example companies — fully offline">
-                Load mock demo set
-              </button>
-            )}
-          </div>
-          <textarea
-            placeholder={"One per line or comma-separated\nacme.com\nhttps://www.example-saas.io"}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            aria-label="Company domains"
-          />
-          <div className="row" style={{ marginTop: 8 }}>
-            <label className="btn btn-sm">
-              Upload CSV
-              <input
-                type="file"
-                accept=".csv,text/csv"
-                hidden
-                onChange={async (e) => {
-                  const f = e.target.files?.[0];
-                  if (f) setCsv({ name: f.name, content: await f.text() });
-                  e.target.value = "";
-                }}
-              />
-            </label>
-            {csv && (
-              <span className="sub">
-                {csv.name} <button className="btn btn-sm" onClick={() => setCsv(null)}>Remove</button>
-              </span>
-            )}
-            <span className="sub">CSV column: domain, website or company_url</span>
-          </div>
-
-          {(text.trim() || csv) && (
-            <div style={{ marginTop: 10 }}>
-              {preview.csvError && <div className="notice n-bad">{preview.csvError}</div>}
-              <div className="sub">
-                <b style={{ color: "var(--text)" }}>{preview.unique.length}</b> valid domain{preview.unique.length === 1 ? "" : "s"}
-                {preview.dupCount > 0 && <> · {preview.dupCount} duplicate{preview.dupCount === 1 ? "" : "s"} removed</>}
-                {preview.invalid.length > 0 && <> · {preview.invalid.length} invalid</>}
-              </div>
-              {preview.invalid.length > 0 && (
-                <ul className="list-tight sub">
-                  {preview.invalid.slice(0, 8).map((i, k) => (
-                    <li key={k}>
-                      {i.row ? `Row ${i.row}: ` : ""}
-                      <code>{i.input || "(empty)"}</code> — {i.reason}
-                    </li>
-                  ))}
-                </ul>
+          <section className="panel">
+            <div className="panel-head" style={{ marginBottom: 10 }}>
+              <h2>Run the agent</h2>
+              {p?.mode === "demo" && (
+                <button className="btn btn-sm" onClick={() => setText(MOCK_DEMO)} title="Five fictional .example companies">
+                  Demo set
+                </button>
               )}
             </div>
-          )}
-
-          <div style={{ marginTop: 14 }}>
-            <button className="btn btn-primary btn-lg" style={{ width: "100%" }} disabled={submitting || preview.unique.length === 0} onClick={run}>
-              {submitting ? "Starting…" : "RUN OUTREACH AGENT"}
-            </button>
-          </div>
-          {submitMsg && <div className={`notice ${submitMsg.kind === "bad" ? "n-bad" : "n-info"}`} style={{ marginTop: 10 }}>{submitMsg.text}</div>}
-          <p className="sub" style={{ marginTop: 12, marginBottom: 0 }}>
-            Emails are addressed to the identified prospect by name but are delivered <b>only to {p?.demoInbox ?? "your own inbox (DEMO_INBOX_EMAIL)"}</b>. Prospects are never contacted.
-          </p>
-        </section>
+            <textarea placeholder={"acme.com\nexample-saas.io"} value={text} onChange={(e) => setText(e.target.value)} aria-label="Company domains, one per line" />
+            {(text.trim() || csv) && (
+              <div className="sub" style={{ marginTop: 6 }}>
+                <b style={{ color: "var(--text)" }}>{preview.unique.length}</b> valid
+                {preview.dupCount > 0 && <> · {preview.dupCount} duplicate{preview.dupCount === 1 ? "" : "s"} removed</>}
+                {preview.invalid.length > 0 && <> · {preview.invalid.length} invalid</>}
+                {preview.csvError && <div style={{ color: "var(--bad)" }}>{preview.csvError}</div>}
+                {preview.invalid.length > 0 && (
+                  <ul className="list-tight">
+                    {preview.invalid.slice(0, 5).map((i, k) => (
+                      <li key={k}>
+                        <code>{i.input || "(empty)"}</code> — {i.reason}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+            <div className="row" style={{ marginTop: 10 }}>
+              <label className="btn btn-sm" title="CSV with a domain, website or company_url column">
+                {csv ? csv.name : "Upload CSV"}
+                <input
+                  type="file"
+                  accept=".csv,text/csv"
+                  hidden
+                  onChange={async (e) => {
+                    const f = e.target.files?.[0];
+                    if (f) setCsv({ name: f.name, content: await f.text() });
+                    e.target.value = "";
+                  }}
+                />
+              </label>
+              {csv && (
+                <button className="btn btn-sm" onClick={() => setCsv(null)}>
+                  Remove
+                </button>
+              )}
+              <span className="spacer" />
+              <button className="btn btn-primary" disabled={submitting || preview.unique.length === 0} onClick={run}>
+                {submitting ? "Starting…" : "Run outreach agent"}
+              </button>
+            </div>
+            {msg && <div className={`notice ${msg.kind === "bad" ? "n-bad" : "n-info"}`} style={{ marginTop: 10 }}>{msg.text}</div>}
+            <p className="sub" style={{ margin: "12px 0 0" }}>Emails go only to {p?.demoInbox ?? "your inbox"} — never to prospects.</p>
+          </section>
         )}
 
         <section className="panel">
-          <div className="panel-head">
-            <h2>Agent progress</h2>
-            {running ? <span className="badge b-info">Running · {m?.running} active</span> : <span className="sub">{batchId ? `Batch #${batchId}` : "Idle"}</span>}
+          <div className="panel-head" style={{ marginBottom: 10 }}>
+            <h2>Progress</h2>
+            {running && <span className="badge b-info">{m?.running} running</span>}
           </div>
           {progress.length === 0 ? (
-            <div className="empty">{data?.readOnly ? "No agent run in progress." : "Enter domains and run the agent to see each stage execute here."}</div>
+            <div className="empty">{data?.readOnly ? "Nothing running." : "Run the agent to watch each step here."}</div>
           ) : (
             progress.map((c) => (
-              <div key={c.id} className="progress-card">
+              <Link key={c.id} href={`/companies/${c.id}`} className="progress-card" style={{ display: "block", color: "inherit", textDecoration: "none" }}>
                 <div className="row">
-                  <b style={{ textTransform: "uppercase", letterSpacing: ".03em" }}>{c.domain}</b>
-                  <SourceBadge source={c.dataSource} />
+                  <b>{c.name ?? c.domain}</b>
+                  {c.dataSource === "mock" && <SourceBadge source="mock" />}
                   <span className="spacer" />
-                  <StatusBadge status={c.run?.status === "running" ? "running" : c.status} />
-                  <Link href={`/companies/${c.id}`} className="sub">Details →</Link>
+                  <StatusBadge status={c.run?.status === "running" || c.run?.status === "queued" ? c.run.status : c.status} />
                 </div>
-                <StageList stages={c.run?.stages ?? []} />
-              </div>
+                <Pips stages={c.run?.stages ?? []} />
+                <div className="sub ellipsis" style={{ marginTop: 6 }}>{currentStepLabel(c.run?.stages ?? [])}</div>
+              </Link>
             ))
           )}
         </section>
@@ -264,59 +241,77 @@ export default function Dashboard() {
       <section className="panel" style={{ marginTop: 16 }}>
         <div className="panel-head">
           <h2>Results</h2>
-          <span className="sub">Click a row for the full research, evidence and email</span>
+          {m && m.llmCalls > 0 && <span className="faint">{m.llmCalls} AI calls{m.llmCostUsd > 0 ? ` · ~$${m.llmCostUsd.toFixed(2)}` : ""}</span>}
         </div>
         {data?.companies.length ? (
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
+                  <th style={{ padding: 0 }} />
                   <th>Company</th>
-                  <th>ICP score</th>
-                  <th>Qualification</th>
-                  <th>Reason</th>
+                  <th>Score</th>
+                  <th>Status</th>
+                  <th>Why</th>
                   <th>Decision-maker</th>
-                  <th>Pain point 1</th>
-                  <th>Pain point 2</th>
+                  <th>Pain points</th>
                   <th>Email</th>
                 </tr>
               </thead>
               <tbody>
-                {data.companies.map((c) => (
-                  <tr key={c.id} className="clickable" onClick={() => router.push(`/companies/${c.id}`)}>
-                    <td>
-                      <b>{c.name ?? c.domain}</b>
-                      <div className="sub">{c.domain}</div>
-                      <SourceBadge source={c.dataSource} />
-                    </td>
-                    <td className="score">{c.score ?? "—"}{c.score !== null && <span className="sub">/100</span>}</td>
-                    <td><StatusBadge status={c.run?.status === "running" ? "running" : c.status} /></td>
-                    <td><div className="clamp sub">{c.reason ?? "—"}</div></td>
-                    <td>{c.contactName ? <><b>{c.contactName}</b><div className="sub">{c.contactTitle}</div></> : "—"}</td>
-                    <td><div className="clamp">{c.painPoint1 ?? "—"}</div></td>
-                    <td><div className="clamp">{c.painPoint2 ?? "—"}</div></td>
-                    <td><StatusBadge status={c.emailStatus} /></td>
-                  </tr>
-                ))}
+                {data.companies.map((c) => {
+                  const status = c.run?.status === "running" || c.run?.status === "queued" ? c.run.status : c.status;
+                  return (
+                    <tr key={c.id} className="clickable" onClick={() => router.push(`/companies/${c.id}`)}>
+                      <td className={`rail ${tone(status)}`}><span /></td>
+                      <td>
+                        <b style={{ whiteSpace: "nowrap" }}>{c.name ?? c.domain}</b>
+                        <div className="faint" style={{ fontSize: 12, whiteSpace: "nowrap" }}>
+                          {c.domain}
+                          {c.dataSource === "mock" && <span style={{ color: "var(--mock)", fontWeight: 600 }}> · mock</span>}
+                        </div>
+                      </td>
+                      <td><Meter value={c.score} status={c.decision} /></td>
+                      <td><StatusBadge status={status} /></td>
+                      <td title={c.reason ?? undefined}>{shortReason(c)}</td>
+                      <td>
+                        {c.contactName ? (
+                          <>
+                            <div>{c.contactName}</div>
+                            <div className="faint clamp1" style={{ fontSize: 12 }}>{c.contactTitle}</div>
+                          </>
+                        ) : (
+                          <span className="faint">—</span>
+                        )}
+                      </td>
+                      <td style={{ maxWidth: 280 }}>
+                        {c.painPoint1 ? (
+                          <>
+                            <div className="clamp1" title={c.painPoint1}>1. {c.painPoint1}</div>
+                            {c.painPoint2 && <div className="clamp1 sub" title={c.painPoint2}>2. {c.painPoint2}</div>}
+                          </>
+                        ) : (
+                          <span className="faint">—</span>
+                        )}
+                      </td>
+                      <td><StatusBadge status={c.emailStatus} /></td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         ) : (
-          <div className="empty">No companies processed yet.</div>
-        )}
-        {m && m.llmCalls > 0 && (
-          <p className="sub" style={{ marginBottom: 0 }}>
-            {m.llmCalls} model calls{m.llmCostUsd > 0 ? ` · est. $${m.llmCostUsd.toFixed(3)}` : ""} · {p?.hunter.detail}
-          </p>
+          <div className="empty">No companies yet.</div>
         )}
       </section>
     </div>
   );
 }
 
-function Metric({ label, value, hint }: { label: string; value: number | undefined; hint?: string }) {
+function Metric({ label, value, hint, accent }: { label: string; value: number | undefined; hint?: string; accent?: boolean }) {
   return (
-    <div className="metric">
+    <div className={`metric${accent ? " accent" : ""}`}>
       <div className="label">{label}</div>
       <div className="value">{value ?? "–"}</div>
       {hint && <div className="hint">{hint}</div>}
