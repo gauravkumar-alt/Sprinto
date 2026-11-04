@@ -212,6 +212,16 @@ cloudflared tunnel --no-autoupdate --url http://127.0.0.1:3123
 ```
 There is no sign-in. Through the shared link the app is **view-only**: anyone with the link can browse the dashboard, research, evidence, contacts, pain points and emails (email addresses are partly masked), but every write — running the agent, adding contacts, approving, (re)sending, Gmail authorisation — is refused and only works on `http://localhost:3123`. The link works only while both commands run and your Mac is awake, and a quick tunnel gets a new random address each time it starts.
 
+## Public link on Vercel (read-only, via Supabase)
+A permanent link that works even when your Mac is off. The agent still runs only on your Mac; Vercel shows the latest published results and cannot run anything, send email or see any key except the public read key.
+
+1. Create a Supabase project and run [`supabase/showroom.sql`](supabase/showroom.sql) in its SQL editor (one table, public **read-only** by row-level security).
+2. On the Mac: `bash scripts/set-keys.sh --supabase` — Project URL, anon key, service_role key (the write key stays in `.env.local`).
+3. Publish: `npm run snapshot`. After that the app republishes automatically when a batch or a resend finishes.
+4. In Vercel → Settings → Environment Variables add **only** `SUPABASE_URL` and `SUPABASE_ANON_KEY`, then redeploy.
+
+What gets published: the dashboard, research, evidence, qualification reports, contacts, pain points and drafted emails, with every email address partly masked (publishing refuses if a full address remains). Nothing is committed to GitHub.
+
 ## Security hardening (local app)
 - The server binds to `127.0.0.1` only (`npm run dev` / `npm start`).
 - `src/middleware.ts` rejects API requests whose `Host` isn't loopback (DNS rebinding) and any state-changing request that isn't same-origin JSON (CSRF). Add `ALLOWED_HOSTS` only for a tunnel you control.

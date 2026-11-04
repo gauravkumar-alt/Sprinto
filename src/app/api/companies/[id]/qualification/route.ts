@@ -1,14 +1,20 @@
 /** The qualification result in the required JSON output format. */
 import { NextResponse } from "next/server";
-import { getDb } from "@/lib/db";
-import { qualificationReport } from "@/lib/report";
-import * as repo from "@/lib/repo";
+import { getSnapshot, isShowroom } from "@/lib/showroom";
 import { isRemoteViewer, maskPayload } from "@/lib/viewer";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const id = Number((await params).id);
+  const idStr = (await params).id;
+  if (isShowroom()) {
+    const report = (await getSnapshot()).qualification[idStr];
+    return report ? NextResponse.json(report) : NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  const { getDb } = await import("@/lib/db");
+  const { qualificationReport } = await import("@/lib/report");
+  const repo = await import("@/lib/repo");
+  const id = Number(idStr);
   const company = getDb().prepare("SELECT domain, name FROM companies WHERE id=?").get(id) as { domain: string; name: string | null } | undefined;
   if (!company) return NextResponse.json({ error: "Not found" }, { status: 404 });
   const q = repo.latestQualification(id);

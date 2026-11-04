@@ -8,6 +8,7 @@
  *  - State-changing requests must come from this same origin and be JSON (blocks CSRF).
  */
 import { NextResponse, type NextRequest } from "next/server";
+import { isShowroom } from "@/lib/showroom-flag";
 import { isLoopbackHost as isLoopback } from "@/lib/viewer";
 
 const hostname = (hostHeader: string) => hostHeader.toLowerCase().replace(/:\d+$/, "");
@@ -22,6 +23,13 @@ export function hostAllowed(hostHeader: string | null, extra: string[]): boolean
 const deny = (status: number, error: string) => NextResponse.json({ error }, { status });
 
 export function middleware(req: NextRequest) {
+  // Showroom (e.g. Vercel): a frozen, already-masked snapshot with no database or keys behind it.
+  // Any host may read it; nothing can be changed and Gmail authorisation is off.
+  if (isShowroom()) {
+    if (req.method !== "GET" && req.method !== "HEAD") return deny(403, "Read-only snapshot. Run the agent on the computer it's installed on.");
+    if (req.nextUrl.pathname.startsWith("/api/auth/")) return deny(403, "Not available in the snapshot.");
+    return NextResponse.next();
+  }
   const extra = (process.env.ALLOWED_HOSTS ?? "").split(",").map((h) => h.trim().toLowerCase()).filter(Boolean);
   const host = req.headers.get("host");
   const path = req.nextUrl.pathname;

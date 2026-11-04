@@ -31,6 +31,7 @@ type Status = {
   batches: { id: number }[];
   companies: Company[];
   readOnly: boolean;
+  snapshotAt?: string | null;
 };
 
 const MOCK_DEMO = "vaultlane.example\nledgerly.example\nnorthpeak-consulting.example\norbitboard.example\npromptbait.example";
@@ -132,7 +133,11 @@ export default function Dashboard() {
         <div className="chips">
           {p && (
             <>
-              {data?.readOnly && <span className="badge b-mute">View only</span>}
+              {data?.snapshotAt ? (
+                <span className="badge b-mute" title="Frozen, read-only copy of the results">Snapshot · {new Date(data.snapshotAt).toLocaleDateString([], { day: "numeric", month: "short" })}</span>
+              ) : (
+                data?.readOnly && <span className="badge b-mute">View only</span>
+              )}
               <ProviderChip label={p.llm.state === "real" ? p.llm.detail.split(" · ")[0].replace(/^./, (s) => s.toUpperCase()) : "AI"} {...p.llm} />
               <ProviderChip label="Hunter" {...p.hunter} />
               <ProviderChip label="Gmail" {...p.gmail} />
@@ -168,7 +173,10 @@ export default function Dashboard() {
         {data?.readOnly ? (
           <section className="panel">
             <h2>Shared view</h2>
-            <p className="sub" style={{ margin: "6px 0 0" }}>Browse each company&apos;s research, contact and email. Runs happen on the host machine.</p>
+            <p className="sub" style={{ margin: "6px 0 0" }}>
+              Browse each company&apos;s research, contact and email.{" "}
+              {data?.snapshotAt ? `Results as of ${new Date(data.snapshotAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}.` : "Runs happen on the host machine."}
+            </p>
           </section>
         ) : (
           <section className="panel">

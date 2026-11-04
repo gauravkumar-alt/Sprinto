@@ -46,6 +46,7 @@ import { checkEmail, checkPainPoints, quoteAppearsIn, validRefs } from "./checks
 import { classifyTitleByRules, companyScale, contactConfidence, rankContacts, selectionReason } from "./contactRanking";
 import { decideQualification, finalizeUnresolved, researchTargets } from "./qualification";
 import { condensePages, pageType } from "./research";
+import { publishAfterRun } from "@/lib/showroom-publish";
 
 /** Thrown to end a company's pipeline early with a recorded outcome (not a crash). */
 class StageStop extends Error {
@@ -927,6 +928,7 @@ export async function retrySend(companyId: number, confirmUnknownOutcome: boolea
   const outcome = await sendEmail({ runId, companyId, emailId: email.id, key, P, mockData, prospectEmails: [contact.business_email], confirmUnknownOutcome });
   repo.setCompanyStatus(companyId, outcome);
   repo.finishRun(runId, outcome === "failed" ? "failed" : "completed", outcome, started);
+  void publishAfterRun();
   return outcome;
 }
 
@@ -946,7 +948,10 @@ const g = globalThis as unknown as { __outreachJobs?: Set<Promise<unknown>>; __o
 /** Fire-and-forget execution inside the long-running Node server; progress is durable in SQLite. */
 export function runInBackground(runIds: number[], opts: ProcessOptions = {}) {
   g.__outreachJobs ??= new Set();
-  const job = runBatch(runIds, opts).finally(() => g.__outreachJobs!.delete(job));
+  // After each batch, refresh the public read-only copy (Supabase) if configured.
+  const job = runBatch(runIds, opts)
+    .then(() => publishAfterRun())
+    .finally(() => g.__outreachJobs!.delete(job));
   g.__outreachJobs.add(job);
 }
 

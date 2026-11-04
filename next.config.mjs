@@ -4,5 +4,7 @@ const nextConfig = {
   poweredByHeader: false,
   // Lets a dev server run next to a production server without sharing build output.
   distDir: process.env.NEXT_DIST_DIR || ".next",
+  // Vercel builds serve the read-only showroom snapshot (no local database or keys there).
+  env: { SHOWROOM_BUILD: process.env.VERCEL || process.env.SHOWROOM === "true" ? "1" : "" },
 };
 export default nextConfig;

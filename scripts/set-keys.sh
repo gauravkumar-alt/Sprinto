@@ -27,11 +27,18 @@ ask() {
   if [ -n "$value" ]; then set_var "$name" "$value"; echo "  ✓ $name saved"; else echo "  – $name unchanged"; fi
 }
 
-ask LLM_API_KEY         "Anthropic API key"                 yes
-ask HUNTER_API_KEY      "Hunter.io API key"                 yes
-ask GMAIL_CLIENT_ID     "Google OAuth client ID"            no
-ask GMAIL_CLIENT_SECRET "Google OAuth client secret"        yes
-ask DEMO_INBOX_EMAIL    "Your Gmail address (the only inbox emails go to)" no
+if [ "${1:-}" = "--supabase" ]; then
+  # Public read-only site: the Mac publishes masked results to Supabase.
+  ask SUPABASE_URL              "Supabase Project URL (https://xxxx.supabase.co)" no
+  ask SUPABASE_ANON_KEY         "Supabase anon (public) key"                      no
+  ask SUPABASE_SERVICE_ROLE_KEY "Supabase service_role key (stays on this Mac)"   yes
+else
+  ask LLM_API_KEY         "LLM API key (Gemini or Anthropic)" yes
+  ask HUNTER_API_KEY      "Hunter.io API key"                 yes
+  ask GMAIL_CLIENT_ID     "Google OAuth client ID"            no
+  ask GMAIL_CLIENT_SECRET "Google OAuth client secret"        yes
+  ask DEMO_INBOX_EMAIL    "Your Gmail address (the only inbox emails go to)" no
+fi
 
 echo
 echo "Done. Saved to $(pwd)/$ENV"
