@@ -37,6 +37,7 @@ const firstSentence = (s?: string | null) => {
 
 const TRIGGER: Record<string, string> = {
   active_or_planned: "preparing for an audit",
+  already_certified: "already certified (renewals & new frameworks)",
   initiative_timing_uncertain: "working on compliance",
   direct_requirement: "customers require certification",
   security_reviews: "facing security reviews",

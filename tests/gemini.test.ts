@@ -62,3 +62,25 @@ describe("Gemini provider", () => {
     expect(err.kind).toBe("config");
   });
 });
+
+describe("Gemini timeouts", () => {
+  beforeEach(() => {
+    freshDb();
+    resetGeminiCooldowns();
+    process.env.LLM_PROVIDER = "gemini";
+    process.env.LLM_MODEL = "primary-model";
+    process.env.LLM_FALLBACK_MODELS = "fallback-a";
+  });
+
+  it("falls back to the next model when a request hangs or drops", async () => {
+    const urls: string[] = [];
+    const f = (async (url: string) => {
+      urls.push(String(url));
+      if (urls.length === 1) throw new Error("The operation was aborted due to timeout");
+      return new Response(JSON.stringify(ok), { status: 200 });
+    }) as unknown as typeof fetch;
+    const out = await runPrompt(new GeminiLLMProvider("k", f), contactSelectionPrompt, input);
+    expect(out.classifications[0].category).toBe("head_of_security");
+    expect(urls.map((u) => u.match(/models\/([^:]+)/)![1])).toEqual(["primary-model", "fallback-a"]);
+  });
+});

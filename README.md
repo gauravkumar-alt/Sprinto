@@ -88,7 +88,9 @@ src/
 | Audit intent | 30 | active/planned 30 · initiative, timing unclear 20 · already certified 10 · generic 5 · none 0 |
 | Enterprise pressure | 25 | direct requirement 25 · security questionnaires/reviews 20 · enterprise positioning 5 · none 0 |
 
-These weights are initial business assumptions for the case, not facts supplied by Sprinto. "Already certified" (10) is an addition: it is not a qualifying trigger on its own.
+These weights are initial business assumptions for the case, not facts supplied by Sprinto.
+
+**Already-certified companies** (SOC 2 / ISO 27001 already in place, backed by an observed quote) qualify by default as a renewal/expansion opportunity — annual re-audits, continuous monitoring, adding frameworks — and their emails never claim they are preparing for a certification they hold. Set `ALREADY_CERTIFIED_QUALIFIES=false` for the strict case ICP (only audit preparation or enterprise pressure qualify).
 
 ### Research loop
 After each qualification pass, if the decision is *research_more*, the orchestrator lists the gaps, asks the planner to choose URLs **only from already-discovered same-site candidates** (and search queries, if a search provider is configured), fetches them, extracts new verified evidence, re-extracts the profile and re-classifies. It stops at `RESEARCH_MAX_ROUNDS` (default 2), when the page budget is spent, or when a round adds no new evidence; unresolved companies become **Needs review**. Every round (gaps, action, new sources, new evidence, decision/score before → after) is stored and shown.
@@ -112,7 +114,7 @@ LLM_API_KEY=sk-ant-...          # from console.anthropic.com — separate from a
 LLM_MODEL=claude-opus-5-5
 LLM_EFFORT=medium               # low | medium | high
 ```
-**Gemini instead of Claude:** set `LLM_PROVIDER=gemini` and a Google AI Studio key in `LLM_API_KEY` (or `GEMINI_API_KEY`). The default model is `gemini-3.8-flash`; on free-tier keys Flash can return 503 (high demand) and Pro models have no quota, so `LLM_FALLBACK_MODELS` (default `gemini-3.5-flash-lite,gemini-3.1-flash-lite`) are tried in order and the model that actually answered is logged per call. Use `BATCH_CONCURRENCY=1` on the free tier.
+**Gemini instead of Claude:** set `LLM_PROVIDER=gemini` and a Google AI Studio key in `LLM_API_KEY` (or `GEMINI_API_KEY`). The default model is `gemini-3.6-flash` (the newest Flash that reliably answers on free-tier keys at the time of writing); `LLM_FALLBACK_MODELS` (default `gemini-3.5-flash,gemini-3.5-flash-lite`) are tried in order when a model is overloaded (503), out of quota (429) or times out, and an unavailable model is skipped for 5 minutes. The model that actually answered is logged per call. Use `BATCH_CONCURRENCY=1` on the free tier.
 
 Structured outputs are used so the model must return schema-shaped JSON; responses are still validated with Zod and retried once (`LLM_MAX_JSON_RETRIES`). Token usage and estimated cost per call are logged and shown. A typical qualified company costs roughly 7–12 model calls.
 
@@ -158,7 +160,7 @@ DEMO_INBOX_EMAIL=you@gmail.com
 ## Testing
 
 ```bash
-npm test            # vitest: 70 tests
+npm test            # vitest: 74 tests
 npm run typecheck
 npm run lint
 npm run build

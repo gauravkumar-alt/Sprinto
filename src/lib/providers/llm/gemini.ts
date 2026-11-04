@@ -54,7 +54,7 @@ export class GeminiLLMProvider implements LLMProvider {
         this.schemaSupported = false;
         res = await this.call(req, false, model);
       }
-      if (res.status !== 503 && res.status !== 429) break;
+      if (res.status !== 503 && res.status !== 429 && res.status !== 599) break;
       cooldownUntil.set(model, Date.now() + COOLDOWN_MS);
     }
     return this.parse(res);
@@ -83,7 +83,8 @@ export class GeminiLLMProvider implements LLMProvider {
         signal: AbortSignal.timeout(this.cfg.timeoutMs),
       });
     } catch (err) {
-      throw new TransientError(`Gemini connection error: ${(err as Error).message}`);
+      // A hung or dropped request falls through to the next model (status 599) instead of stalling the run.
+      return { status: 599, json: { error: { message: `Gemini connection error/timeout: ${(err as Error).message}` } } as GeminiResponse, model };
     }
     const json = (await res.json().catch(() => ({}))) as GeminiResponse;
     return { status: res.status, json, model };
@@ -92,7 +93,7 @@ export class GeminiLLMProvider implements LLMProvider {
   private parse({ status, json, model }: { status: number; json: GeminiResponse; model: string }): LLMRawResponse {
     const msg = json.error?.message ?? `HTTP ${status}`;
     if (status === 429) throw new TransientError(`Gemini rate limit / quota: ${msg}`, 15_000);
-    if (status >= 500) throw new TransientError(`Gemini server error ${status}`);
+    if (status >= 500) throw new TransientError(status === 599 ? json.error?.message ?? "Gemini timeout" : `Gemini server error ${status}`);
     if (status === 401 || status === 403) throw new LLMError(`Gemini rejected the API key (${status}): ${msg}`, "config");
     if (status === 404) throw new LLMError(`Gemini model "${model}" not found — set LLM_MODEL to an available model`, "config");
     if (status >= 400) throw new LLMError(`Gemini rejected the request (${status}): ${msg}`, "api");

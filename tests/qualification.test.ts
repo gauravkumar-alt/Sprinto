@@ -131,6 +131,19 @@ describe("ICP qualification engine", () => {
     expect(r.decision).toBe("needs_review");
   });
 
+  it("already-certified SaaS qualifies as a renewal/expansion opportunity (default setting)", () => {
+    const certified: EvidenceLite[] = [...ev, { ref: "E9", type: "observed", text: "We are SOC 2 Type II certified and ISO 27001 certified" }];
+    const r = decideQualification({ classification: classification({ saas, audit: { level: "already_certified", evidence_ids: ["E9"], rationale: "" } }), evidence: certified, canResearchMore: false });
+    expect(r.decision).toBe("qualified");
+    expect(r.explanation).toMatch(/already certified/i);
+  });
+
+  it("already-certified still needs an observed certification quote", () => {
+    const r = decideQualification({ classification: classification({ saas, audit: { level: "already_certified", evidence_ids: ["E6"], rationale: "" } }), evidence: ev, canResearchMore: false });
+    expect(r.audit_trigger).not.toBe("already_certified");
+    expect(r.decision).toBe("needs_review");
+  });
+
   it("competitors (outside target) are not qualified", () => {
     const r = decideQualification({
       classification: classification({ saas, audit: { level: "active_or_planned", evidence_ids: ["E3"], rationale: "" }, outside_target: { flag: true, reason: "compliance automation vendor", evidence_ids: ["E1"] } }),

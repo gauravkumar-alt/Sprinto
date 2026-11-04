@@ -39,7 +39,12 @@ function shortReason(c: Company): string {
   if (!s) return "—";
   const audit = ["active_or_planned", "initiative_timing_uncertain"].includes(s.audit);
   const ent = ["direct_requirement", "security_reviews"].includes(s.enterprise);
-  if (c.decision === "qualified") return audit && ent ? "Audit + enterprise" : audit ? "Audit prep" : ent ? "Enterprise pressure" : "Reviewer approved";
+  if (c.decision === "qualified") {
+    if (audit && ent) return "Audit + enterprise";
+    if (audit) return "Audit prep";
+    if (ent) return "Enterprise pressure";
+    return s.audit === "already_certified" ? "Certified · renewal" : "Reviewer approved";
+  }
   if (c.decision === "not_qualified") return s.saas === "not_saas" ? "Not SaaS" : "Outside target";
   if (s.audit === "already_certified") return "Already certified";
   if (s.saas !== "confirmed") return "SaaS unclear";

@@ -39,6 +39,7 @@ STYLE — avoid: "I hope this email finds you well", "I came across", "I've been
 
 ACCURACY:
 - Only say the company is preparing for SOC 2/ISO 27001 if audit_level is "active_or_planned" and the evidence says so.
+- If audit_level is "already_certified": acknowledge the certification they hold (from the evidence) and pitch keeping it effortless — annual re-audits, continuous control monitoring, adding frameworks. Never imply they are not certified or are preparing for it.
 - Only say customers require certification if enterprise_level is "direct_requirement".
 - The company name must be exactly as given. Address only the named person.
 

@@ -31,15 +31,15 @@ export function getConfig() {
     llm: {
       provider: llmProvider, // "anthropic" | "gemini"
       apiKey: str("LLM_API_KEY") || (isGemini ? str("GEMINI_API_KEY") || str("GOOGLE_API_KEY") : str("ANTHROPIC_API_KEY")),
-      model: str("LLM_MODEL", isGemini ? "gemini-3.8-flash" : "claude-opus-5-5"),
+      model: str("LLM_MODEL", isGemini ? "gemini-3.6-flash" : "claude-opus-5-5"),
       /** Tried in order when the primary model is overloaded (HTTP 503) or out of quota (429). Gemini only. */
-      fallbackModels: str("LLM_FALLBACK_MODELS", isGemini ? "gemini-3.5-flash-lite,gemini-3.1-flash-lite" : "")
+      fallbackModels: str("LLM_FALLBACK_MODELS", isGemini ? "gemini-3.5-flash,gemini-3.5-flash-lite" : "")
         .split(",")
         .map((m) => m.trim())
         .filter(Boolean),
       effort: str("LLM_EFFORT", "medium") as "low" | "medium" | "high",
       maxJsonRetries: num("LLM_MAX_JSON_RETRIES", 1),
-      timeoutMs: num("LLM_TIMEOUT_MS", 120_000),
+      timeoutMs: num("LLM_TIMEOUT_MS", isGemini ? 75_000 : 120_000),
       refusalFallback: str("LLM_REFUSAL_FALLBACK", "true") !== "false",
     },
 
@@ -116,10 +116,17 @@ export const SCORING_RUBRIC = {
   },
 } as const;
 
+/**
+ * Already-certified SaaS companies (SOC 2 / ISO 27001 in place) qualify as a renewal / expansion
+ * opportunity: annual re-audits, continuous monitoring, more frameworks. Set ALREADY_CERTIFIED_QUALIFIES=false
+ * for the strict case ICP (only "preparing for an audit" or "enterprise pressure" qualify).
+ */
+export const ALREADY_CERTIFIED_QUALIFIES = (process.env.ALREADY_CERTIFIED_QUALIFIES ?? "true").trim() !== "false";
+
 /** Signal levels that count as a credible buying trigger (the ICP's OR clause). */
-export const QUALIFYING_TRIGGERS = {
-  audit: ["active_or_planned", "initiative_timing_uncertain"] as const,
-  enterprise: ["direct_requirement", "security_reviews"] as const,
+export const QUALIFYING_TRIGGERS: { audit: readonly string[]; enterprise: readonly string[] } = {
+  audit: ["active_or_planned", "initiative_timing_uncertain", ...(ALREADY_CERTIFIED_QUALIFIES ? ["already_certified"] : [])],
+  enterprise: ["direct_requirement", "security_reviews"],
 };
 
 /** Whether an inferred ("likely") SaaS model may qualify. The case says "SaaS companies"; we require confirmation by default. */

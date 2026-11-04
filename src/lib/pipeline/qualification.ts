@@ -138,7 +138,7 @@ const LABEL = {
   audit: {
     active_or_planned: "Preparing for an audit",
     initiative_timing_uncertain: "Compliance work underway, no date",
-    already_certified: "Already certified",
+    already_certified: "Already certified (renewal & expansion)",
     generic_material: "Generic security wording only",
     none: "No audit evidence",
   },

@@ -26,6 +26,8 @@ EACH PAIN POINT MUST:
 - type "direct" only if the evidence explicitly states the underlying situation (e.g. "customers require ISO 27001", "preparing for SOC 2"). Otherwise "inferred", phrased cautiously ("may", "likely", "could").
 - confidence 0-1.
 
+If the company is already certified, focus on keeping it current: annual re-audits, continuous evidence collection, maintaining controls as the team grows, adding frameworks (e.g. ISO 27001 after SOC 2). Do not suggest they lack the certification they hold.
+
 NEVER invent financial losses, lost deals, complaints, deadlines, team sizes, or internal problems. Never present a likely pain as confirmed.
 
 If the evidence cannot support two credible, distinct pain points, set insufficient_evidence=true (you may still return what you have). Do not pad with generic statements.
