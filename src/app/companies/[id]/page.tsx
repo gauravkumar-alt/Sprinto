@@ -2,30 +2,12 @@
 import Link from "next/link";
 import { use, useCallback, useEffect, useState } from "react";
 import { Refs, SourceBadge, StageList, StatusBadge, ThemeToggle, postJson } from "@/components/ui";
-import { SCORING_RUBRIC } from "@/lib/config";
 import type { CompanyProfile, QualificationResult } from "@/lib/schemas";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Detail = any;
 type Tab = "overview" | "qualification" | "evidence" | "contact" | "email";
 
-const LEVEL: Record<string, string> = {
-  confirmed: "Confirmed SaaS",
-  likely: "Likely SaaS",
-  not_saas: "Not SaaS",
-  unknown: "Unknown",
-  series_a_c: "Series A–C",
-  growth_indicators: "Growth signals, stage unknown",
-  other_verified: "Other stage",
-  active_or_planned: "Preparing for an audit",
-  initiative_timing_uncertain: "Compliance work, no date",
-  already_certified: "Already certified",
-  generic_material: "Generic security wording",
-  none: "None found",
-  direct_requirement: "Customers require certification",
-  security_reviews: "Security reviews / questionnaires",
-  enterprise_positioning: "Enterprise focus only",
-};
 
 const fmt = (s?: string | null) => (s ? new Date(s).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "—");
 /** First sentence only — the full text stays available on hover. */
@@ -46,6 +28,7 @@ const TRIGGER: Record<string, string> = {
 /** One-line verdict built from the stored classification (consistent for old and new runs). */
 function verdict(q: QualificationResult & { override_note?: string }): string {
   if (q.override_note) return `Approved by reviewer: ${q.override_note}`;
+  if (q.categories) return q.explanation; // new rubric: already a one-line, evidence-based verdict
   const triggers = [TRIGGER[q.audit_trigger], TRIGGER[q.enterprise_pressure]].filter(Boolean);
   if (q.decision === "qualified") return `SaaS company ${triggers.join(" and ")}.`;
   if (q.decision === "not_qualified") return q.saas_status === "not_saas" ? "Not a SaaS business." : q.explanation;
@@ -124,6 +107,8 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
   const isMock = c.data_source === "mock";
   const rounds: any[] = d.research?.rounds ?? [];
   const status = running ? "running" : c.current_status;
+  // Contact/email shown while the latest decision isn't "qualified" come from an earlier run.
+  const earlier = q?.decision !== "qualified" && Boolean(selected || email);
   const shown = evidence.filter((e) => filter === "all" || e.evidence_type === filter);
   const count = (t: string) => evidence.filter((e) => e.evidence_type === t).length;
 
@@ -174,7 +159,7 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
         <div>
           <div className="k">Decision-maker</div>
           <div className="v ellipsis">{selected?.name ?? "—"}</div>
-          <div className="s ellipsis">{selected?.title ?? (q?.decision === "qualified" ? "Not found" : "Qualified companies only")}</div>
+          <div className="s ellipsis">{selected ? `${selected.title}${earlier ? " · earlier run" : ""}` : q?.decision === "qualified" ? "Not found" : "Qualified companies only"}</div>
         </div>
         <div>
           <div className="k">Pain points</div>
@@ -184,7 +169,7 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
         <div>
           <div className="k">Email</div>
           <div className="v">{send ? <StatusBadge status={send.status} /> : email ? <StatusBadge status={email.status} /> : "—"}</div>
-          <div className="s ellipsis">{send?.completed_at ? fmt(send.completed_at) : email ? `Validation: ${email.validation_status}` : "Not written"}</div>
+          <div className="s ellipsis">{send?.completed_at ? `${fmt(send.completed_at)}${earlier ? " · earlier run" : ""}` : email ? `Validation: ${email.validation_status}` : "Not written"}</div>
         </div>
       </div>
 
@@ -238,39 +223,95 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
             <>
               <div className="panel-head">
                 <div className="row"><span className="score" style={{ fontSize: 22 }}>{q.fit_score}/100</span><StatusBadge status={q.decision} /></div>
-                <span className="faint">Confidence {Math.round(q.confidence * 100)}%</span>
+                <div className="row">
+                  <span className="faint">Confidence {Math.round(q.confidence * 100)}%</span>
+                  {q.categories && <a className="btn btn-sm" href={`/api/companies/${id}/qualification`} target="_blank" rel="noreferrer">JSON</a>}
+                </div>
               </div>
               <p style={{ margin: 0 }} title={q.explanation}>{verdict(q)}</p>
               {q.override_note && <div className="notice n-warn" style={{ marginTop: 10 }}>Approved by reviewer: {q.override_note}</div>}
-              <Bar label="SaaS" value={q.score_breakdown.saas} max={SCORING_RUBRIC.saas.confirmed} level={q.saas_status} />
-              <Bar label="Stage" value={q.score_breakdown.stage} max={SCORING_RUBRIC.stage.series_a_c} level={q.stage_status} extra={q.stage_label !== "Unknown" ? q.stage_label : undefined} />
-              <Bar label="Audit intent" value={q.score_breakdown.audit} max={SCORING_RUBRIC.audit.active_or_planned} level={q.audit_trigger} />
-              <Bar label="Enterprise pressure" value={q.score_breakdown.enterprise} max={SCORING_RUBRIC.enterprise.direct_requirement} level={q.enterprise_pressure} />
-              <p className="faint" style={{ fontSize: 12, margin: "14px 0 0" }}>Qualifies when SaaS is confirmed and there is an audit or enterprise trigger. Stage only affects the score.</p>
-              {q.evidence_ids?.length > 0 && <div style={{ marginTop: 8 }}><Refs ids={q.evidence_ids} onClick={showEvidence} /></div>}
-              {q.adjustments?.length > 0 && (
-                <div className="notice n-info" style={{ marginTop: 12 }}>
-                  Downgraded for weak evidence:
-                  <ul className="list-tight">{q.adjustments.map((a, i) => <li key={i}>{a}</li>)}</ul>
+              {(q.disqualification_reasons?.length ?? 0) > 0 && (
+                <div className="notice n-bad" style={{ marginTop: 10 }}>
+                  {q.flags?.includes("ALREADY_CERTIFIED") && <b>ALREADY_CERTIFIED · </b>}
+                  {q.disqualification_reasons!.join(" · ")}
                 </div>
               )}
-              {q.missing_information?.length > 0 && (
+              {q.recommended_next_action && <p className="sub" style={{ margin: "10px 0 0" }}>Next: {q.recommended_next_action}</p>}
+
+              {q.categories ? (
+                <div style={{ marginTop: 16 }}>
+                  {(["business_model_fit", "growth_stage", "compliance_buying_signals", "enterprise_readiness"] as const).map((k) => {
+                    const cat = q.categories[k];
+                    return (
+                      <div key={k} className="rubric-cat">
+                        <div className="rubric-head">
+                          <b>{cat.label}</b>
+                          <span className="spacer" />
+                          <div className="track"><div className="fill" style={{ width: `${(cat.score / cat.max) * 100}%` }} /></div>
+                          <span className="score">{cat.score}/{cat.max}</span>
+                        </div>
+                        {cat.criteria.map((cr) => (
+                          <div key={cr.id} className="crit">
+                            <span>{cr.criterion}</span>
+                            <span className="pts">{cr.points}/{cr.max_points}</span>
+                            <span className={`badge st st-${cr.status}`}>{cr.status === "NOT_FOUND" ? "Not found" : cr.status === "FOUND" ? "Found" : "Unknown"}</span>
+                            {cr.evidence[0] && (
+                              <div className="ev">
+                                <span className="ref" onClick={() => showEvidence(cr.evidence[0].ref)}>{cr.evidence[0].ref}</span>
+                                “{cr.evidence[0].text.replace(/^The page states:\s*/i, "").slice(0, 220)}”
+                                {cr.evidence[0].source_url && /^https?:/.test(cr.evidence[0].source_url) && !isMock && (
+                                  <> · <a href={cr.evidence[0].source_url} target="_blank" rel="noreferrer noopener">source</a></>
+                                )}
+                                {cr.confidence ? <span className="faint"> · {Math.round(cr.confidence * 100)}%</span> : null}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="faint" style={{ marginTop: 12 }}>Assessed with the previous rubric — re-run to see the 100-point breakdown.</p>
+              )}
+
+              <dl className="kv" style={{ marginTop: 16 }}>
+                {(q.existing_certifications?.length ?? 0) > 0 && (
+                  <>
+                    <dt>Certifications held</dt>
+                    <dd>{q.existing_certifications!.map((c) => <span key={c.name} style={{ marginRight: 8 }}>{c.name} <Refs ids={c.evidence_refs} onClick={showEvidence} /></span>)}</dd>
+                  </>
+                )}
+                {q.missing_information?.length > 0 && (<><dt>Unanswered</dt><dd>{q.missing_information.join(" · ")}</dd></>)}
+                {(q.pages_scraped?.length ?? 0) > 0 && (
+                  <>
+                    <dt>Pages researched</dt>
+                    <dd>
+                      {q.pages_scraped!.map((u) => (
+                        <div key={u} className="ellipsis">{isMock || !/^https?:/.test(u) ? u : <a href={u} target="_blank" rel="noreferrer noopener">{u.replace(/^https?:\/\//, "")}</a>}</div>
+                      ))}
+                    </dd>
+                  </>
+                )}
+                {q.research_summary && (<><dt>Summary</dt><dd className="sub">{q.research_summary}</dd></>)}
+              </dl>
+
+              {q.adjustments?.length > 0 && (
                 <details style={{ marginTop: 12 }}>
-                  <summary>Missing information ({q.missing_information.length})</summary>
-                  <ul className="list-tight sub">{q.missing_information.map((m, i) => <li key={i}>{m}</li>)}</ul>
+                  <summary>Claims not counted ({q.adjustments.length})</summary>
+                  <ul className="list-tight sub">{q.adjustments.map((a, i) => <li key={i}>{a}</li>)}</ul>
                 </details>
               )}
               {rounds.length > 0 && (
-                <div style={{ marginTop: 16 }}>
-                  <h3>Research loop</h3>
+                <details style={{ marginTop: 12 }}>
+                  <summary>Research steps ({rounds.length})</summary>
                   {rounds.map((r: any) => (
                     <div key={r.round} className="evidence-item">
-                      <b>Round {r.round}</b> <span className="sub">· {r.scoreBefore} → {r.scoreAfter}{r.stopReason ? ` · ${r.stopReason}` : ""}</span>
-                      <div className="meta">{r.action.urls.length ? r.action.urls.join(", ") : "No pages fetched"}</div>
+                      <b>Step {r.round}</b> <span className="sub">· {(r.action.pageTypes ?? []).join(", ") || "—"} · {r.scoreBefore} → {r.scoreAfter}</span>
                       {r.newEvidence.length > 0 && <div style={{ marginTop: 4 }}><Refs ids={r.newEvidence} onClick={showEvidence} /></div>}
                     </div>
                   ))}
-                </div>
+                </details>
               )}
               {q.decision === "needs_review" && !running && !d.readOnly && <ApproveForm onSubmit={(note) => act({ action: "approve", note }, "Approved — finding a contact…")} />}
             </>
@@ -465,18 +506,6 @@ function Why({ q, a, full }: { q: string; a: string; full?: string }) {
 function Signals({ s, onRef }: { s: { summary: string; evidence_ids: string[] }[]; onRef: (r: string) => void }) {
   if (!s?.length) return <span className="faint">None</span>;
   return <ul className="list-tight" style={{ marginTop: 0 }}>{s.map((x, i) => <li key={i}>{x.summary} <Refs ids={x.evidence_ids} onClick={onRef} /></li>)}</ul>;
-}
-
-function Bar({ label, value, max, level, extra }: { label: string; value: number; max: number; level: string; extra?: string }) {
-  return (
-    <div className="bar">
-      <span>{label}</span>
-      <div className="track"><div className="fill" style={{ width: `${(value / max) * 100}%` }} /></div>
-      <span className="score">{value}/{max}</span>
-      <span />
-      <span className="lvl">{LEVEL[level] ?? level}{extra ? ` (${extra})` : ""}</span>
-    </div>
-  );
 }
 
 function ApproveForm({ onSubmit }: { onSubmit: (note: string) => void }) {

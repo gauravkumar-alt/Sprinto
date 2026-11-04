@@ -24,7 +24,7 @@ import type {
   GeneratedEmail,
   MissingInformationOutput,
   PainPoint,
-  QualificationClassification,
+  QualificationFindings,
   ResearchEvidenceOutput,
   RoleCategory,
 } from "@/lib/schemas";
@@ -137,66 +137,46 @@ function extraction(input: ExtractionPromptInput): CompanyProfileOutput {
   };
 }
 
-function qualification(input: QualificationPromptInput): QualificationClassification {
+function qualification(input: QualificationPromptInput): QualificationFindings {
   const ev = input.evidence.filter((e) => e.type === "observed");
-  const p = input.profile;
-  const saasEv = ev.filter((e) => p.saas_evidence_ids.includes(e.ref));
-  const saasLevel =
-    p.is_saas === "no" ? "not_saas" : p.is_saas === "yes" ? (saasEv.some((e) => RX.saasStrong.test(e.quote)) ? "confirmed" : "likely") : "unknown";
+  const services = find(ev, RX.services);
+  const saasEv = find(ev, RX.saasStrong);
+  const softwareEv = find(ev, RX.software);
+  const b2cEv = find(ev, /consumers|individuals|personal use|shoppers|households/i);
+  const b2bEv = find(ev, /teams|businesses|companies|enterprise|finance leaders|marketers|studios|organi[sz]ations/i);
   const series = find(ev, RX.series);
-  const later = find(ev, RX.laterStage);
-  const growth = find(ev, RX.growth);
-  const stage = series.length
-    ? { level: "series_a_c" as const, evidence_ids: ids(series), rationale: "Funding round explicitly stated.", stage_label: series[0].quote.match(RX.series)![0] }
-    : later.length
-      ? { level: "other_verified" as const, evidence_ids: ids(later), rationale: "Non A–C stage stated.", stage_label: "Other" }
-      : growth.length
-        ? { level: "growth_indicators" as const, evidence_ids: ids(growth), rationale: "Growth indicators without a stated round.", stage_label: "Unknown" }
-        : { level: "unknown" as const, evidence_ids: [], rationale: "No stage evidence.", stage_label: "Unknown" };
-
-  const active = find(ev, RX.auditActive).filter((e) => RX.frameworks.test(e.quote));
-  const initiative = find(ev, RX.auditInitiative);
+  const rolesEv = ev.find((e) => /(\d+)\s+open (roles|positions)/i.test(e.quote));
+  const crit = (id: QualificationFindings["criteria"][number]["id"], hits: EvidenceView[], found = hits.length > 0) => ({
+    id,
+    found,
+    evidence_ids: ids(hits).slice(0, 3),
+    confidence: found ? 0.8 : 0,
+    note: "MOCK keyword match",
+  });
   const certified = find(ev, RX.certified);
-  const generic = find(ev, RX.generic);
-  const audit = active.length
-    ? { level: "active_or_planned" as const, evidence_ids: ids(active), rationale: "Explicit preparation/plan for an audit or certification." }
-    : initiative.length
-      ? { level: "initiative_timing_uncertain" as const, evidence_ids: ids(initiative), rationale: "Compliance initiative without timing." }
-      : certified.length
-        ? { level: "already_certified" as const, evidence_ids: ids(certified), rationale: "Already certified." }
-        : generic.length
-          ? { level: "generic_material" as const, evidence_ids: ids(generic), rationale: "Generic security/privacy wording only." }
-          : { level: "none" as const, evidence_ids: [], rationale: "No audit/compliance evidence." };
-
-  const direct = find(ev, RX.enterpriseDirect);
-  const reviews = find(ev, RX.questionnaires);
-  const ent = find(ev, RX.enterprise);
-  const enterprise = direct.length
-    ? { level: "direct_requirement" as const, evidence_ids: ids(direct), rationale: "Customers/prospects explicitly require certification." }
-    : reviews.length
-      ? { level: "security_reviews" as const, evidence_ids: ids(reviews), rationale: "Security questionnaires/reviews documented." }
-      : ent.length
-        ? { level: "enterprise_positioning" as const, evidence_ids: ids(ent), rationale: "Enterprise positioning without demonstrated compliance pressure." }
-        : { level: "none" as const, evidence_ids: [], rationale: "No enterprise evidence." };
-
-  const missing: QualificationClassification["missing_information"] = [];
-  if (saasLevel === "unknown") missing.push({ dimension: "saas", question: "Is the core product sold as SaaS?" });
-  if (stage.level === "unknown") missing.push({ dimension: "stage", question: "What funding stage is the company at?" });
-  if (["none", "generic_material"].includes(audit.level)) missing.push({ dimension: "audit", question: "Is the company preparing for SOC 2/ISO 27001?" });
-  if (["none", "enterprise_positioning"].includes(enterprise.level))
-    missing.push({ dimension: "enterprise", question: "Do enterprise customers require certification or security reviews?" });
-
   return {
-    saas: { level: saasLevel, evidence_ids: ids(saasEv), rationale: "Based on product description." },
-    stage,
-    audit,
-    enterprise,
-    outside_target: {
-      flag: p.is_compliance_automation_vendor,
-      reason: p.is_compliance_automation_vendor ? "Company sells compliance automation (competitor)." : "",
-      evidence_ids: [],
-    },
-    missing_information: missing,
+    company_name: input.company_name_hint ?? input.domain.split(".")[0].replace(/(^|-)([a-z])/g, (_, d, ch) => (d ? " " : "") + ch.toUpperCase()),
+    business_description: (softwareEv[0] ?? ev[0])?.quote ?? "Unknown",
+    product_or_service: softwareEv.length ? "Software platform" : "Unknown",
+    is_saas: services.length ? "no" : saasEv.length ? "yes" : "unknown",
+    audience: b2cEv.length && !b2bEv.length ? "b2c" : b2bEv.length ? "b2b" : "unknown",
+    funding_stage: series[0]?.quote.match(RX.series)?.[0].replace(/^s/, "S") ?? "Unknown",
+    open_roles_count: rolesEv ? Number(rolesEv.quote.match(/(\d+)\s+open/i)![1]) : null,
+    criteria: [
+      crit("saas", services.length ? services : saasEv, !services.length && saasEv.length > 0),
+      crit("b2b", b2cEv.length && !b2bEv.length ? b2cEv : b2bEv, b2bEv.length > 0),
+      crit("product", softwareEv),
+      crit("funding_series_ac", series),
+      crit("open_roles", rolesEv ? [rolesEv] : []),
+      crit("enterprise_pricing", find(ev, /enterprise (plan|pricing|tier)|enterprise:/i)),
+      crit("preparing_certification", find(ev, RX.auditActive).filter((e) => RX.frameworks.test(e.quote))),
+      crit("compliance_hiring", find(ev, /hiring .*(security|compliance|grc)/i)),
+      crit("enterprise_security_reviews", [...find(ev, RX.questionnaires), ...find(ev, RX.enterpriseDirect)]),
+      crit("named_enterprise_customers", find(ev, /customers include|case stud/i)),
+      crit("targets_enterprise", find(ev, RX.enterprise)),
+    ],
+    existing_certifications: certified.map((e) => ({ name: frameworksIn(e.quote), evidence_ids: [e.ref] })),
+    outside_target: { flag: find(ev, RX.vendor).length > 0, reason: "Sells compliance automation", evidence_ids: ids(find(ev, RX.vendor)) },
   };
 }
 

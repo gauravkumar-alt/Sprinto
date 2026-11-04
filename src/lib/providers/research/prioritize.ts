@@ -55,6 +55,6 @@ export const TRUST_SUBDOMAINS = ["trust", "security"];
 
 /** Common paths worth trying when the site's navigation/sitemap does not link them. */
 export const COMMON_PATHS = [
-  "/about", "/company", "/security", "/trust", "/compliance", "/enterprise", "/pricing",
-  "/customers", "/press", "/news", "/careers", "/blog",
+  "/about", "/company", "/product", "/platform", "/security", "/trust", "/compliance", "/enterprise", "/pricing",
+  "/customers", "/case-studies", "/press", "/news", "/careers", "/jobs", "/blog",
 ];

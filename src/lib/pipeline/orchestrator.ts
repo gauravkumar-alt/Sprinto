@@ -14,11 +14,11 @@ import {
   emailGenerationPrompt,
   emailValidationPrompt,
   extractionPrompt,
-  missingInformationPrompt,
   painPointPrompt,
   qualificationPrompt,
   researchPrompt,
   type EvidenceView,
+  type QualificationPromptInput,
 } from "@/lib/prompts";
 import { getProvidersFor, type ProviderSet } from "@/lib/providers";
 import { sameSite } from "@/lib/providers/research/prioritize";
@@ -44,7 +44,8 @@ import type {
 import { clamp01, createLimiter, errorMessage, sha256, truncate } from "@/lib/util";
 import { checkEmail, checkPainPoints, quoteAppearsIn, validRefs } from "./checks";
 import { classifyTitleByRules, companyScale, contactConfidence, rankContacts, selectionReason } from "./contactRanking";
-import { decideQualification, finalizeUnresolved, LEVEL_LABELS, researchableGaps, type EvidenceLite } from "./qualification";
+import { decideQualification, finalizeUnresolved, researchTargets } from "./qualification";
+import { condensePages, pageType } from "./research";
 
 /** Thrown to end a company's pipeline early with a recorded outcome (not a crash). */
 class StageStop extends Error {
@@ -66,6 +67,12 @@ interface Ctx {
   qualification?: QualificationResult;
   session?: CrawlSession;
   reusedResearch: boolean;
+  /** Company name supplied with the input (optional hint). */
+  nameHint: string | null;
+  /** Page types fetched or looked for (a missing page counts as checked → NOT_FOUND rather than UNKNOWN). */
+  checkedPages: Set<string>;
+  pagesScraped: string[];
+  additionalFetched: number;
 }
 
 export interface ProcessOptions {
@@ -84,8 +91,19 @@ const view = (e: EvidenceRecord): EvidenceView => ({
   quote: truncate(e.supportingText, 400),
   source_url: e.sourceUrl,
 });
-const lite = (e: EvidenceRecord): EvidenceLite => ({ ref: e.ref, type: e.evidenceType, text: `${e.claim} ${e.supportingText}` });
 const evMap = (ev: EvidenceRecord[]) => new Map(ev.map((e) => [e.ref, { type: e.evidenceType, text: `${e.claim} ${e.supportingText}` }]));
+
+const AUDIT_TEXT: Record<string, string> = {
+  active_or_planned: "Preparing for an audit or certification",
+  initiative_timing_uncertain: "Hiring for security / compliance",
+  already_certified: "Already certified",
+  none: "No audit signal found",
+};
+const ENTERPRISE_TEXT: Record<string, string> = {
+  security_reviews: "Faces enterprise security reviews / customer requirements",
+  enterprise_positioning: "Targets enterprise buyers",
+  none: "No enterprise signal found",
+};
 
 // ─────────────────────────────── Stage 1 helpers ───────────────────────────────
 
@@ -105,13 +123,19 @@ async function storePagesAndCollectEvidence(ctx: Ctx, pages: FetchedPage[], roun
     }),
   }));
   const injectionFlags = stored.flatMap((p) => detectInjection(`${p.title}\n${p.text}`).map((hit) => ({ url: p.url, hit })));
+  for (const p of stored) {
+    if (p.sourceType === "website") ctx.checkedPages.add(pageType(p.url, ctx.domain));
+    ctx.pagesScraped.push(p.url);
+  }
   if (stored.length === 0) return { added: [] as EvidenceRecord[], discarded: 0, injectionFlags, modelFlaggedInjection: false };
 
+  // Only the signal-dense lines go to the model (~2,000 tokens per pass); quotes are verified against the full page.
   const cfg = getConfig().research;
+  const condensed = condensePages(stored, cfg.contextBudgetChars);
   const out = await runPrompt(
     ctx.llm,
     researchPrompt,
-    { domain: ctx.domain, pages: stored.map((p) => ({ id: p.id, url: p.url, title: cleanField(p.title, 200), text: p.text.slice(0, cfg.maxCharsPerPage) })), focus },
+    { domain: ctx.domain, pages: condensed.map((p) => ({ id: p.id, url: p.url, title: cleanField(p.title, 200), text: p.condensed })), focus },
     { agentRunId: ctx.runId },
   );
   const byId = new Map(stored.map((p) => [p.id, p]));
@@ -242,27 +266,32 @@ async function extractProfile(ctx: Ctx): Promise<CompanyProfile> {
 // ─────────────────────────────── Stage 3 ───────────────────────────────
 
 async function classifyAndDecide(ctx: Ctx, canResearchMore: boolean): Promise<QualificationResult> {
-  const profileForPrompt: Omit<CompanyProfile, "source_evidence_ids"> & { source_evidence_ids?: string[] } = { ...ctx.profile! };
-  delete profileForPrompt.source_evidence_ids;
+  let profileForPrompt: QualificationPromptInput["profile"] = null;
+  if (ctx.profile) {
+    const p: Partial<CompanyProfile> = { ...ctx.profile };
+    delete p.source_evidence_ids;
+    profileForPrompt = p as QualificationPromptInput["profile"];
+  }
   const usable = ctx.evidence.filter((e) => e.evidenceType !== "unknown");
-  const classification = await runPrompt(
+  const findings = await runPrompt(
     ctx.llm,
     qualificationPrompt,
-    { domain: ctx.domain, profile: profileForPrompt, evidence: usable.map(view) },
+    { domain: ctx.domain, company_name_hint: ctx.nameHint, profile: profileForPrompt, pages_checked: [...ctx.checkedPages], evidence: usable.map(view) },
     { agentRunId: ctx.runId },
   );
   return decideQualification({
-    classification,
-    evidence: usable.map(lite),
+    findings,
+    evidence: usable.map((e) => ({ ref: e.ref, type: e.evidenceType, text: `${e.claim} ${e.supportingText}`, url: e.sourceUrl, pageTag: e.sourceUrl ? pageType(e.sourceUrl, ctx.domain) : null })),
+    checkedPages: ctx.checkedPages,
+    pagesScraped: ctx.pagesScraped,
     canResearchMore,
-    noUsableEvidence: !ctx.evidence.some((e) => e.evidenceType === "observed"),
   });
 }
 
 interface LoopRound {
   round: number;
   gaps: string[];
-  action: { urls: string[]; searchQueries: string[]; plannerSummary: string };
+  action: { urls: string[]; pageTypes: string[]; searchQueries: string[] };
   newSources: string[];
   newEvidence: string[];
   decisionBefore: string;
@@ -272,28 +301,29 @@ interface LoopRound {
   stopReason?: string;
 }
 
+/**
+ * Targeted research loop: after the homepage, fetch only the page type most likely to answer each open
+ * critical question (Product/About → business model, Careers → growth, Security/Trust → compliance and
+ * certification, Customers/Pricing → enterprise). At most RESEARCH_MAX_ADDITIONAL_PAGES fetches.
+ */
 async function qualifyWithResearchLoop(ctx: Ctx, eventId: number) {
   const cfg = getConfig().research;
-  const maxRounds = ctx.reusedResearch || !ctx.session ? 0 : cfg.maxAdditionalRounds;
+  const canFetch = () => Boolean(ctx.session) && !ctx.reusedResearch && ctx.additionalFetched < cfg.maxAdditionalPages;
   const rounds: LoopRound[] = [];
   let round = 0;
-  let searchesUsed = 0;
-  const previousActions: string[] = [];
-  let result = await classifyAndDecide(ctx, round < maxRounds);
+  let searched = false;
+  let result = await classifyAndDecide(ctx, canFetch());
   repo.insertQualification(ctx.companyId, ctx.runId, round, result);
 
-  while (result.decision === "research_more" && round < maxRounds) {
+  while (result.decision === "research_more" && canFetch() && round < cfg.maxAdditionalRounds) {
     round++;
-    const gaps = researchableGaps(result);
-    repo.stageEnd(eventId, "completed", `Research loop round ${round}: looking for ${gaps.map((g) => g.dimension).join(", ")}…`);
+    const wanted = researchTargets(result, ctx.checkedPages);
+    repo.stageEnd(eventId, "completed", `Checking ${wanted.slice(0, 3).join(", ") || "more pages"}…`);
     getDb().prepare("UPDATE stage_events SET status='running' WHERE id=?").run(eventId);
-
-    const candidates = ctx.session!.unvisitedCandidates(15);
-    const searchAvail = ctx.P.search.available && searchesUsed < cfg.maxSearchCalls;
     const rec: LoopRound = {
       round,
-      gaps: gaps.map((g) => `${g.dimension}: ${g.question}`),
-      action: { urls: [], searchQueries: [], plannerSummary: "" },
+      gaps: result.missing_information,
+      action: { urls: [], pageTypes: [], searchQueries: [] },
       newSources: [],
       newEvidence: [],
       decisionBefore: result.decision,
@@ -301,81 +331,62 @@ async function qualifyWithResearchLoop(ctx: Ctx, eventId: number) {
       scoreBefore: result.fit_score,
       scoreAfter: result.fit_score,
     };
-    const pageBudgetLeft = Math.max(0, cfg.maxPagesPerCompany - ctx.session!.pagesFetched());
-    if ((candidates.length === 0 || pageBudgetLeft === 0) && !searchAvail) {
-      rec.stopReason =
-        pageBudgetLeft === 0
-          ? `Page budget exhausted (RESEARCH_MAX_PAGES=${cfg.maxPagesPerCompany}) and no search provider configured`
-          : "No unvisited relevant pages and no search provider configured";
-      rounds.push(rec);
-      break;
-    }
-    const plan = await runPrompt(
-      ctx.llm,
-      missingInformationPrompt,
-      {
-        domain: ctx.domain,
-        gaps,
-        candidate_urls: candidates.map((c) => ({ url: c.url, tag: c.tag })),
-        search_available: searchAvail,
-        max_urls: cfg.maxPagesPerRound,
-        max_queries: searchAvail ? Math.min(2, cfg.maxSearchCalls - searchesUsed) : 0,
-        previous_actions: previousActions,
-      },
-      { agentRunId: ctx.runId },
-    );
-    // Only URLs from the discovered candidate list are allowed (the model cannot introduce new targets).
-    const allowed = new Set(candidates.map((c) => c.url));
-    const urls = plan.urls_to_fetch.filter((u) => allowed.has(u)).slice(0, cfg.maxPagesPerRound);
-    const queries = searchAvail ? plan.search_queries.filter((q) => !previousActions.includes(`search:${q}`)).slice(0, cfg.maxSearchCalls - searchesUsed) : [];
-    rec.action = { urls, searchQueries: queries, plannerSummary: plan.reasoning_summary };
-    previousActions.push(...urls.map((u) => `fetch:${u}`), ...queries.map((q) => `search:${q}`));
 
-    const remainingBudget = Math.max(0, cfg.maxPagesPerCompany - ctx.session!.pagesFetched());
-    const fetched = urls.length && remainingBudget ? await ctx.session!.fetchUrls(urls, Math.min(cfg.maxPagesPerRound, remainingBudget)) : { pages: [], log: [] };
-    const pages: FetchedPage[] = [...fetched.pages];
-    for (const q of queries) {
-      searchesUsed++;
+    // One best candidate URL per wanted page type, taken from links the site actually has (or common paths).
+    const budget = Math.min(cfg.maxPagesPerRound, cfg.maxAdditionalPages - ctx.additionalFetched);
+    const candidates = ctx.session!.unvisitedCandidates(80);
+    const pages: FetchedPage[] = [];
+    for (const tag of wanted) {
+      if (pages.length >= budget) break;
+      const options = candidates.filter((c) => c.tag === tag).slice(0, 2);
+      let got = false;
+      for (const opt of options) {
+        const r = await ctx.session!.fetchUrls([opt.url], 1);
+        rec.action.urls.push(opt.url);
+        if (r.pages.length) {
+          pages.push(...r.pages);
+          ctx.additionalFetched++;
+          got = true;
+          break;
+        }
+      }
+      // Looked for this page type: checked, even if the site has no such page (→ NOT_FOUND, not UNKNOWN).
+      ctx.checkedPages.add(tag);
+      rec.action.pageTypes.push(got ? tag : `${tag} (none)`);
+    }
+
+    // Optional external search (only when configured) for funding facts the website rarely states.
+    if (!searched && ctx.P.search.available && result.stage_status === "unknown") {
+      searched = true;
+      const q = `${ctx.domain} funding round Series`;
+      rec.action.searchQueries.push(q);
       try {
-        const results = await ctx.P.search.search(q);
         const nameRoot = ctx.domain.split(".")[0].toLowerCase();
-        for (const r of results.slice(0, 3)) {
-          if (r.snippet.length < 40) continue;
-          // Third-party results must at least name the company; otherwise they may be about someone else.
-          if (!`${r.url} ${r.title} ${r.snippet}`.toLowerCase().includes(nameRoot)) continue;
+        for (const r of (await ctx.P.search.search(q)).slice(0, 3)) {
+          if (r.snippet.length < 40 || !`${r.url} ${r.title} ${r.snippet}`.toLowerCase().includes(nameRoot)) continue;
           pages.push({ url: r.url, title: r.title, text: r.snippet, publishedAt: r.publishedAt, retrievedAt: new Date().toISOString(), sourceType: "search_result" });
         }
       } catch (err) {
-        repo.appendRunError(ctx.runId, "qualify", `Search failed for "${q}": ${errorMessage(err)}`);
+        repo.appendRunError(ctx.runId, "qualify", `Search failed: ${errorMessage(err)}`);
       }
     }
+
     rec.newSources = pages.map((p) => p.url);
-    if (pages.length === 0) {
-      rec.stopReason = "No new pages could be retrieved";
-      rounds.push(rec);
-      break;
-    }
-    const focus = gaps.map((g) => g.question);
-    const { added } = await storePagesAndCollectEvidence(ctx, pages, round, focus);
+    const { added } = pages.length ? await storePagesAndCollectEvidence(ctx, pages, round, result.missing_information) : { added: [] as EvidenceRecord[] };
     rec.newEvidence = added.map((e) => e.ref);
-    if (added.length === 0) {
-      rec.stopReason = "New pages contained no new relevant evidence";
-      rounds.push(rec);
-      break;
-    }
-    ctx.evidence = [...ctx.evidence.filter((e) => e.evidenceType === "observed"), ...added];
-    ctx.profile = await extractProfile(ctx);
-    repo.setCompanyStatus(ctx.companyId, "running", { name: ctx.profile.company_name, profile: ctx.profile });
-    result = await classifyAndDecide(ctx, round < maxRounds);
+    if (added.length) ctx.evidence = [...ctx.evidence, ...added];
+    result = await classifyAndDecide(ctx, canFetch() && round < cfg.maxAdditionalRounds && researchTargets(result, ctx.checkedPages).length > 0);
     repo.insertQualification(ctx.companyId, ctx.runId, round, result);
     rec.decisionAfter = result.decision;
     rec.scoreAfter = result.fit_score;
+    if (!pages.length) rec.stopReason = "No matching pages on the site";
     rounds.push(rec);
+    if (!pages.length && !researchTargets(result, ctx.checkedPages).length) break;
   }
 
-  // Loop budget exhausted or stopped: unresolved cases are never forced into a decision.
+  // Research limit reached with critical evidence still missing → NEEDS_REVIEW (never a guess).
   if (result.decision === "research_more") {
-    result = finalizeUnresolved(result, round);
+    result = finalizeUnresolved(result);
     repo.insertQualification(ctx.companyId, ctx.runId, round, result);
   }
   repo.updateResearchRun(ctx.researchRunId, { rounds, researchRounds: round, status: "completed", complete: true });
@@ -503,7 +514,22 @@ export async function processCompany(runId: number, opts: ProcessOptions = {}): 
       eventId = repo.stageStart(runId, "research");
       throw new StageStop("failed", P.unavailable.llm!);
     }
-    const ctx: Ctx = { runId, companyId: run.company_id, domain: run.domain, P, llm: P.llm, mock, researchRunId: 0, evidence: [], reusedResearch: false };
+    const nameHint = (getDb().prepare("SELECT name FROM companies WHERE id=?").get(run.company_id) as { name: string | null }).name;
+    const ctx: Ctx = {
+      runId,
+      companyId: run.company_id,
+      domain: run.domain,
+      P,
+      llm: P.llm,
+      mock,
+      researchRunId: 0,
+      evidence: [],
+      reusedResearch: false,
+      nameHint,
+      checkedPages: new Set(),
+      pagesScraped: [],
+      additionalFetched: 0,
+    };
 
     if (opts.startAt === "contact") {
       // Resume: reuse stored research, profile and qualification.
@@ -536,11 +562,16 @@ export async function processCompany(runId: number, opts: ProcessOptions = {}): 
         repo.cloneResearch(cached!.id, ctx.researchRunId);
         ctx.evidence = repo.getEvidenceForResearchRun(ctx.researchRunId);
         ctx.reusedResearch = true;
+        for (const pg of repo.getPages(ctx.researchRunId)) {
+          ctx.pagesScraped.push(pg.url);
+          if (pg.source_type === "website") ctx.checkedPages.add(pageType(pg.url, ctx.domain));
+        }
         repo.stageEnd(eventId, "completed", `Reused research from ${cached!.completed_at.slice(0, 16).replace("T", " ")} (cache) · ${ctx.evidence.length} evidence items`, { reusedFrom: cached!.id });
       } else {
         ctx.researchRunId = repo.createResearchRun(ctx.companyId, runId, mock.size ? "mock" : "real");
         ctx.session = P.research.startSession(run.domain);
-        const crawl = await ctx.session.initialCrawl(cfg.maxPagesPerRound);
+        // One initial request: the homepage. Further pages are fetched only when evidence is missing.
+        const crawl = await ctx.session.initialCrawl(1);
         if (!crawl.reachable) {
           repo.updateResearchRun(ctx.researchRunId, { status: "failed", complete: true });
           repo.stageEnd(eventId, "failed", "Website unreachable", { log: crawl.log }, crawl.log.map((l) => `${l.url}: ${l.detail ?? l.outcome}`).join("; "));
@@ -559,7 +590,7 @@ export async function processCompany(runId: number, opts: ProcessOptions = {}): 
         repo.stageEnd(
           eventId,
           "completed",
-          `${crawl.pages.length} pages · ${r.added.length} facts${r.discarded ? ` · ${r.discarded} unverifiable dropped` : ""}${warn}`,
+          `Homepage · ${r.added.length} facts${r.discarded ? ` · ${r.discarded} unverifiable dropped` : ""}${crawl.log.some((l) => l.detail?.includes("headless")) ? " · rendered" : ""}${warn}`,
           { log: crawl.log, discardedEvidence: r.discarded, injectionFlags: r.injectionFlags, modelFlaggedInjection: r.modelFlaggedInjection },
         );
       }
@@ -580,7 +611,12 @@ export async function processCompany(runId: number, opts: ProcessOptions = {}): 
       eventId = repo.stageStart(runId, "qualify", "Classifying ICP signals…");
       const { result, rounds } = await qualifyWithResearchLoop(ctx, eventId);
       ctx.qualification = result;
-      const loopNote = rounds.length ? ` · ${rounds.length} extra research round${rounds.length > 1 ? "s" : ""}` : "";
+      // Refresh the profile with everything the targeted pages added (used by the UI, pain points and email).
+      if (rounds.some((r) => r.newEvidence.length)) {
+        ctx.profile = await extractProfile(ctx);
+        repo.setCompanyStatus(ctx.companyId, "running", { name: ctx.profile.company_name, profile: ctx.profile });
+      }
+      const loopNote = ` · ${ctx.pagesScraped.length} page${ctx.pagesScraped.length === 1 ? "" : "s"}`;
       const label = result.decision === "qualified" ? "Qualified" : result.decision === "not_qualified" ? "Not qualified" : "Needs review";
       repo.stageEnd(eventId, result.decision === "qualified" ? "completed" : result.decision === "needs_review" ? "needs_review" : "completed", `${label} · ${result.fit_score}/100${loopNote}`, { rounds });
       eventId = 0;
@@ -630,10 +666,10 @@ export async function processCompany(runId: number, opts: ProcessOptions = {}): 
         enterprise_focus: ctx.profile!.enterprise_focus,
       },
       qualification: {
-        saas: LEVEL_LABELS.saas[q.saas_status],
-        stage: LEVEL_LABELS.stage[q.stage_status],
-        audit: LEVEL_LABELS.audit[q.audit_trigger],
-        enterprise: LEVEL_LABELS.enterprise[q.enterprise_pressure],
+        saas: q.saas_status === "confirmed" ? "Confirmed B2B SaaS" : q.saas_status,
+        stage: q.stage_label,
+        audit: AUDIT_TEXT[q.audit_trigger] ?? q.audit_trigger,
+        enterprise: ENTERPRISE_TEXT[q.enterprise_pressure] ?? q.enterprise_pressure,
         explanation: q.explanation,
       },
       contact: { name: contact.name, title: contact.title, department: contact.department },

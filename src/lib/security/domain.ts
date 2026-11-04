@@ -4,7 +4,7 @@
  * domain name (IPs, localhost, single-label names, internal TLDs).
  */
 export interface DomainParseResult {
-  valid: { input: string; domain: string }[];
+  valid: { input: string; domain: string; name?: string }[];
   invalid: { input: string; row?: number; reason: string }[];
   duplicates: string[];
 }
@@ -64,11 +64,17 @@ export const isMockDomain = (domain: string) => domain.endsWith("." + MOCK_TLD);
 
 /** Parse free text (newline/comma separated) into validated, de-duplicated domains. */
 export function parseDomainList(text: string): DomainParseResult {
+  // One per line (or comma/semicolon separated). Optional company name: "Acme Inc | acme.com".
   const items = text
     .split(/[\n,;]+/)
     .map((s) => s.trim())
     .filter(Boolean);
-  return collect(items.map((input, i) => ({ input, row: i + 1 })));
+  return collect(
+    items.map((raw, i) => {
+      const [left, right] = raw.includes("|") ? raw.split("|", 2).map((x) => x.trim()) : [undefined, raw];
+      return { input: right ?? raw, row: i + 1, name: left || undefined };
+    }),
+  );
 }
 
 const CSV_COLUMNS = ["domain", "website", "company_url", "url", "company_domain", "company website"];
@@ -95,10 +101,11 @@ export function parseDomainCsv(csv: string): DomainParseResult & { column?: stri
       };
     }
   }
-  const rows = lines.slice(start).map((line, i) => ({
-    input: (splitCsvLine(line)[col] ?? "").trim(),
-    row: i + start + 1,
-  }));
+  const nameCol = start === 1 ? header.findIndex((h) => ["company_name", "company", "name", "company name"].includes(h)) : -1;
+  const rows = lines.slice(start).map((line, i) => {
+    const cells = splitCsvLine(line);
+    return { input: (cells[col] ?? "").trim(), row: i + start + 1, name: nameCol >= 0 ? (cells[nameCol] ?? "").trim() || undefined : undefined };
+  });
   return { ...collect(rows), column };
 }
 
@@ -124,10 +131,10 @@ function splitCsvLine(line: string): string[] {
   return out;
 }
 
-function collect(rows: { input: string; row?: number }[]): DomainParseResult {
+function collect(rows: { input: string; row?: number; name?: string }[]): DomainParseResult {
   const seen = new Set<string>();
   const res: DomainParseResult = { valid: [], invalid: [], duplicates: [] };
-  for (const { input, row } of rows) {
+  for (const { input, row, name } of rows) {
     if (!input) {
       res.invalid.push({ input, row, reason: "Empty value" });
       continue;
@@ -142,7 +149,7 @@ function collect(rows: { input: string; row?: number }[]): DomainParseResult {
       continue;
     }
     seen.add(domain);
-    res.valid.push({ input, domain });
+    res.valid.push({ input, domain, ...(name ? { name: name.slice(0, 120) } : {}) });
   }
   return res;
 }

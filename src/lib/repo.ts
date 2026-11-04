@@ -19,13 +19,14 @@ export const refToId = (ref: string) => (/^E\d+$/.test(ref) ? Number(ref.slice(1
 
 // ───────── companies / batches / runs ─────────
 
-export function upsertCompany(domain: string, dataSource: "real" | "mock"): number {
+export function upsertCompany(domain: string, dataSource: "real" | "mock", name?: string): number {
   const db = getDb();
   const now = nowIso();
+  const cleanName = name ? cleanField(name, 120) || null : null;
   db.prepare(
-    `INSERT INTO companies (domain, data_source, created_at, updated_at) VALUES (?,?,?,?)
-     ON CONFLICT(domain) DO UPDATE SET updated_at = excluded.updated_at`,
-  ).run(domain, dataSource, now, now);
+    `INSERT INTO companies (domain, name, data_source, created_at, updated_at) VALUES (?,?,?,?,?)
+     ON CONFLICT(domain) DO UPDATE SET updated_at = excluded.updated_at, name = COALESCE(excluded.name, companies.name)`,
+  ).run(domain, cleanName, dataSource, now, now);
   return (db.prepare("SELECT id FROM companies WHERE domain=?").get(domain) as { id: number }).id;
 }
 

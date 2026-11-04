@@ -1,155 +1,230 @@
-import { describe, expect, it } from "vitest";
-import { computeScore, decideQualification, enforceEvidence, type EvidenceLite } from "@/lib/pipeline/qualification";
-import { classification } from "./helpers";
+import { afterEach, describe, expect, it } from "vitest";
+import { decideQualification, finalizeUnresolved, researchTargets, type EvidenceLite } from "@/lib/pipeline/qualification";
+import { qualificationReport } from "@/lib/report";
+import { findings } from "./helpers";
 
 const ev: EvidenceLite[] = [
-  { ref: "E1", type: "observed", text: "Acme is a cloud-based SaaS platform billed per seat" },
-  { ref: "E2", type: "observed", text: "Acme raised a $20M Series B" },
-  { ref: "E3", type: "observed", text: "We are preparing for our SOC 2 Type II audit" },
-  { ref: "E4", type: "observed", text: "Enterprise customers require ISO 27001 certification before signing" },
-  { ref: "E5", type: "observed", text: "Trusted by Fortune 500 enterprises" },
-  { ref: "E6", type: "inference", text: "The company appears to prepare for SOC 2 audit" },
-  { ref: "E7", type: "observed", text: "We are an IT consulting and staffing firm" },
-  { ref: "E8", type: "observed", text: "We take security seriously" },
+  { ref: "E1", type: "observed", text: "Acme is a cloud SaaS platform billed per seat", url: "https://acme.com/" },
+  { ref: "E2", type: "observed", text: "Built for finance teams at growing businesses", url: "https://acme.com/" },
+  { ref: "E3", type: "observed", text: "Acme raised a $20M Series B", url: "https://acme.com/press" },
+  { ref: "E4", type: "observed", text: "We have 7 open roles across the company", url: "https://acme.com/careers" },
+  { ref: "E5", type: "observed", text: "Enterprise plan with SSO and audit logs", url: "https://acme.com/pricing" },
+  { ref: "E6", type: "observed", text: "We are preparing for our SOC 2 Type II audit", url: "https://acme.com/security" },
+  { ref: "E7", type: "observed", text: "We're hiring a Security & Compliance Engineer", url: "https://acme.com/careers" },
+  { ref: "E8", type: "observed", text: "Enterprise customers send us security questionnaires during procurement", url: "https://acme.com/security" },
+  { ref: "E9", type: "observed", text: "Customers include Contoso Bank and Northwind", url: "https://acme.com/customers" },
+  { ref: "E10", type: "observed", text: "Built for large enterprises and global teams", url: "https://acme.com/" },
+  { ref: "E11", type: "observed", text: "We are an IT consulting and staffing firm", url: "https://acme.com/about" },
+  { ref: "E12", type: "observed", text: "Acme is SOC 2 Type II certified", url: "https://acme.com/security" },
+  { ref: "E13", type: "inference", text: "The company appears to prepare for SOC 2", url: null },
+  { ref: "E14", type: "observed", text: "Shop our collection made for consumers", url: "https://acme.com/" },
+  { ref: "E15", type: "observed", text: "We take security seriously", url: "https://acme.com/security" },
 ];
-const saas = { level: "confirmed" as const, evidence_ids: ["E1"], rationale: "" };
+const ALL = new Set(["homepage", "product", "pricing", "about", "customers", "funding/news", "hiring", "enterprise", "security/compliance"]);
+const BIZ = { saas: ["E1"], b2b: ["E2"], product: ["E1"] };
+const EVERYTHING = {
+  ...BIZ,
+  funding_series_ac: ["E3"],
+  open_roles: ["E4"],
+  enterprise_pricing: ["E5"],
+  preparing_certification: ["E6"],
+  compliance_hiring: ["E7"],
+  enterprise_security_reviews: ["E8"],
+  named_enterprise_customers: ["E9"],
+  targets_enterprise: ["E10"],
+};
+const decide = (f: ReturnType<typeof findings>, checked = ALL, canResearchMore = false) =>
+  decideQualification({ findings: f, evidence: ev, checkedPages: checked, pagesScraped: ["https://acme.com/"], canResearchMore });
+const saasB2B = { is_saas: "yes" as const, audience: "b2b" as const };
 
-describe("ICP qualification engine", () => {
-  it("1. recognises a confirmed SaaS company", () => {
-    const r = decideQualification({ classification: classification({ saas, audit: { level: "active_or_planned", evidence_ids: ["E3"], rationale: "" } }), evidence: ev, canResearchMore: false });
-    expect(r.saas_status).toBe("confirmed");
-    expect(r.decision).toBe("qualified");
+describe("100-point rubric", () => {
+  afterEach(() => {
+    delete process.env.QUALIFY_THRESHOLD;
+    delete process.env.REVIEW_THRESHOLD;
   });
 
-  it("2. rejects a non-SaaS business with observed evidence", () => {
-    const r = decideQualification({ classification: classification({ saas: { level: "not_saas", evidence_ids: ["E7"], rationale: "" } }), evidence: ev, canResearchMore: true });
+  it("scores each category and criterion deterministically (30 / 25 / 35 / 10)", () => {
+    const r = decide(findings({ ...saasB2B, open_roles_count: 7, found: EVERYTHING }));
+    expect(r.fit_score).toBe(100);
+    expect(r.categories.business_model_fit.score).toBe(30);
+    expect(r.categories.growth_stage.score).toBe(25);
+    expect(r.categories.compliance_buying_signals.score).toBe(35);
+    expect(r.categories.enterprise_readiness.score).toBe(10);
+    expect(r.decision).toBe("qualified");
+    expect(decide(findings({ ...saasB2B, open_roles_count: 7, found: EVERYTHING }))).toEqual(r);
+  });
+
+  it("stores criterion name, max, points, evidence text, source URL, confidence and status", () => {
+    const r = decide(findings({ ...saasB2B, found: { ...BIZ, preparing_certification: ["E6"] } }));
+    const c = r.categories.compliance_buying_signals.criteria.find((x) => x.id === "preparing_certification")!;
+    expect(c).toMatchObject({ max_points: 20, points: 20, status: "FOUND" });
+    expect(c.evidence[0]).toMatchObject({ ref: "E6", source_url: "https://acme.com/security" });
+    expect(c.confidence).toBeGreaterThan(0);
+  });
+
+  it("distinguishes NOT_FOUND (page checked) from UNKNOWN (no relevant page checked)", () => {
+    const checked = new Set(["homepage", "hiring"]);
+    const r = decide(findings({ ...saasB2B, found: BIZ }), checked);
+    const growth = r.categories.growth_stage.criteria;
+    expect(growth.find((x) => x.id === "open_roles")!.status).toBe("NOT_FOUND");
+    expect(growth.find((x) => x.id === "funding_series_ac")!.status).toBe("UNKNOWN");
+  });
+
+  it("never awards points for weak or inferred evidence", () => {
+    const r = decide(findings({ ...saasB2B, found: { ...BIZ, preparing_certification: ["E15"], compliance_hiring: ["E13"], funding_series_ac: ["E1"] } }));
+    expect(r.categories.compliance_buying_signals.score).toBe(0);
+    expect(r.categories.growth_stage.score).toBe(0);
+    expect(r.adjustments.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("requires 5+ open roles for the hiring-growth points", () => {
+    const r = decide(findings({ ...saasB2B, open_roles_count: 3, found: { ...BIZ, open_roles: ["E4"] } }));
+    expect(r.categories.growth_stage.criteria.find((x) => x.id === "open_roles")!.points).toBe(0);
+  });
+});
+
+describe("real-world wording (regressions from live runs)", () => {
+  const live: EvidenceLite[] = [
+    { ref: "L1", type: "observed", text: "Compliance and certifications EU GDPR Compliant SOC II PENDING", url: "https://reflag.com/security" },
+    { ref: "L2", type: "observed", text: "Try our free plan. No credit card required", url: "https://documenso.com/" },
+    { ref: "L3", type: "observed", text: "We are SOC II Type 2 certified", url: "https://x.com/security" },
+    { ref: "L4", type: "observed", text: "Built for product teams at SaaS companies", url: "https://reflag.com/" },
+  ];
+  const run = (f: ReturnType<typeof findings>) => decideQualification({ findings: f, evidence: live, checkedPages: ALL, pagesScraped: [], canResearchMore: false });
+
+  it("recognises 'SOC II … PENDING' as preparing for certification", () => {
+    const r = run(findings({ ...saasB2B, found: { saas: ["L4"], b2b: ["L4"], preparing_certification: ["L1"] } }));
+    expect(r.categories.compliance_buying_signals.criteria.find((c) => c.id === "preparing_certification")!.status).toBe("FOUND");
+  });
+
+  it("recognises self-serve plan wording as SaaS evidence", () => {
+    const r = run(findings({ ...saasB2B, found: { saas: ["L2"] } }));
+    expect(r.categories.business_model_fit.criteria.find((c) => c.id === "saas")!.status).toBe("FOUND");
+  });
+
+  it("treats 'SOC II … certified' as an existing certification", () => {
+    const r = run(findings({ ...saasB2B, found: { saas: ["L4"], b2b: ["L4"] }, existing_certifications: [{ name: "SOC 2", evidence_ids: ["L3"] }] }));
+    expect(r.flags).toContain("ALREADY_CERTIFIED");
+  });
+});
+
+describe("disqualification rules (take priority over the score)", () => {
+  it("disqualifies a non-SaaS business", () => {
+    const r = decide(findings({ is_saas: "no", audience: "b2b", found: { saas: ["E11"], preparing_certification: ["E6"], compliance_hiring: ["E7"] } }));
+    expect(r.decision).toBe("not_qualified");
+    expect(r.disqualification_reasons[0]).toMatch(/Not a SaaS/);
+  });
+
+  it("disqualifies B2C-only companies", () => {
+    const r = decide(findings({ is_saas: "yes", audience: "b2c", found: { saas: ["E1"], b2b: ["E14"] } }));
+    expect(r.decision).toBe("not_qualified");
+    expect(r.disqualification_reasons[0]).toMatch(/B2C/);
+  });
+
+  it("flags ALREADY_CERTIFIED and disqualifies, even with a high score", () => {
+    const r = decide(findings({ ...saasB2B, open_roles_count: 7, found: EVERYTHING, existing_certifications: [{ name: "SOC 2", evidence_ids: ["E12"] }] }));
+    expect(r.fit_score).toBe(100);
+    expect(r.flags).toContain("ALREADY_CERTIFIED");
     expect(r.decision).toBe("not_qualified");
   });
 
-  it("2b. does not reject as non-SaaS without observed evidence", () => {
-    const r = decideQualification({ classification: classification({ saas: { level: "not_saas", evidence_ids: [], rationale: "" } }), evidence: ev, canResearchMore: false });
-    expect(r.decision).toBe("needs_review");
-    expect(r.saas_status).toBe("unknown");
+  it("does not treat a planned certification as held", () => {
+    const r = decide(findings({ ...saasB2B, found: BIZ, existing_certifications: [{ name: "SOC 2", evidence_ids: ["E6"] }] }));
+    expect(r.flags).not.toContain("ALREADY_CERTIFIED");
   });
 
-  it("3. awards stage points for a verified Series A–C round", () => {
-    const r = decideQualification({
-      classification: classification({ saas, stage: { level: "series_a_c", evidence_ids: ["E2"], rationale: "", stage_label: "Series B" }, audit: { level: "active_or_planned", evidence_ids: ["E3"], rationale: "" } }),
-      evidence: ev,
-      canResearchMore: false,
-    });
-    expect(r.score_breakdown.stage).toBe(15);
-    expect(r.stage_label).toBe("Series B");
+  it("returns NEEDS_REVIEW when the business model cannot be established", () => {
+    expect(decide(findings({ found: { preparing_certification: ["E6"] } })).decision).toBe("needs_review");
+    expect(decide(findings({ found: { preparing_certification: ["E6"] } }), ALL, true).decision).toBe("research_more");
   });
 
-  it("3b. a stage claim whose evidence does not name the round is downgraded", () => {
-    const e = enforceEvidence(classification({ stage: { level: "series_a_c", evidence_ids: ["E5"], rationale: "", stage_label: "Series B" } }), ev);
-    expect(e.stage).toBe("growth_indicators");
-  });
-
-  it("4. unknown funding stage does not block qualification", () => {
-    const r = decideQualification({ classification: classification({ saas, enterprise: { level: "direct_requirement", evidence_ids: ["E4"], rationale: "" } }), evidence: ev, canResearchMore: false });
-    expect(r.stage_status).toBe("unknown");
-    expect(r.decision).toBe("qualified");
-  });
-
-  it("5. qualifies on an audit trigger alone", () => {
-    const r = decideQualification({ classification: classification({ saas, audit: { level: "active_or_planned", evidence_ids: ["E3"], rationale: "" } }), evidence: ev, canResearchMore: false });
-    expect(r.decision).toBe("qualified");
-    expect(r.enterprise_pressure).toBe("none");
-  });
-
-  it("6. qualifies on enterprise pressure alone", () => {
-    const r = decideQualification({ classification: classification({ saas, enterprise: { level: "security_reviews", evidence_ids: ["E4"], rationale: "" } }), evidence: ev, canResearchMore: false });
-    expect(r.decision).toBe("qualified");
-  });
-
-  it("7. uses OR logic between the two triggers", () => {
-    const both = decideQualification({
-      classification: classification({ saas, audit: { level: "active_or_planned", evidence_ids: ["E3"], rationale: "" }, enterprise: { level: "direct_requirement", evidence_ids: ["E4"], rationale: "" } }),
-      evidence: ev,
-      canResearchMore: false,
-    });
-    const neither = decideQualification({ classification: classification({ saas }), evidence: ev, canResearchMore: false });
-    expect(both.decision).toBe("qualified");
-    expect(neither.decision).toBe("needs_review");
-  });
-
-  it("8. weak evidence is not treated as direct evidence", () => {
-    // inference-only evidence for an "active" audit, logos-only for "direct requirement"
-    const r = decideQualification({
-      classification: classification({ saas, audit: { level: "active_or_planned", evidence_ids: ["E6"], rationale: "" }, enterprise: { level: "direct_requirement", evidence_ids: ["E5"], rationale: "" } }),
-      evidence: ev,
-      canResearchMore: false,
-    });
-    expect(r.audit_trigger).toBe("generic_material");
-    expect(r.enterprise_pressure).toBe("enterprise_positioning");
-    expect(r.decision).toBe("needs_review");
-    expect(r.adjustments.length).toBe(2);
-  });
-
-  it("8b. evidence ids that don't exist are ignored", () => {
-    const e = enforceEvidence(classification({ saas: { level: "confirmed", evidence_ids: ["E999"], rationale: "" } }), ev);
-    expect(e.saas).toBe("unknown");
-  });
-
-  it("9. SaaS without a buying trigger → needs review (high score does not override the gate)", () => {
-    const r = decideQualification({
-      classification: classification({
-        saas,
-        stage: { level: "series_a_c", evidence_ids: ["E2"], rationale: "", stage_label: "Series B" },
-        audit: { level: "generic_material", evidence_ids: ["E8"], rationale: "" },
-        enterprise: { level: "enterprise_positioning", evidence_ids: ["E5"], rationale: "" },
-      }),
-      evidence: ev,
-      canResearchMore: false,
-    });
-    expect(r.fit_score).toBe(55);
+  it("a high score never overrides a missing B2B requirement", () => {
+    const { b2b: _b2b, ...rest } = EVERYTHING;
+    void _b2b;
+    const r = decide(findings({ is_saas: "yes", audience: "unknown", open_roles_count: 7, found: rest }));
+    expect(r.fit_score).toBe(90);
     expect(r.decision).toBe("needs_review");
   });
 
-  it("9b. returns research_more when gaps remain and budget allows", () => {
-    const r = decideQualification({ classification: classification({ saas }), evidence: ev, canResearchMore: true });
+  it("missing information is not treated as unsuitable", () => {
+    // 30 points and no compliance pages could be checked → review, not rejection.
+    const r = decide(findings({ ...saasB2B, found: BIZ }), new Set(["homepage"]));
+    expect(r.decision).toBe("needs_review");
+    expect(r.missing_information.join(" ")).toMatch(/compliance/i);
+  });
+});
+
+describe("thresholds", () => {
+  afterEach(() => {
+    delete process.env.QUALIFY_THRESHOLD;
+    delete process.env.REVIEW_THRESHOLD;
+  });
+  const score = (found: Record<string, string[]>) => decide(findings({ ...saasB2B, found: { ...BIZ, ...found } }));
+
+  it("75+ qualified, 55–74 needs review, below 55 not qualified", () => {
+    const top = { preparing_certification: ["E6"], compliance_hiring: ["E7"], enterprise_security_reviews: ["E8"], named_enterprise_customers: ["E9"], targets_enterprise: ["E10"] };
+    expect(score(top).fit_score).toBe(75);
+    expect(score(top).decision).toBe("qualified");
+    const mid = score({ preparing_certification: ["E6"], compliance_hiring: ["E7"] });
+    expect(mid.fit_score).toBe(60);
+    expect(mid.decision).toBe("needs_review");
+    const low = score({ targets_enterprise: ["E10"] });
+    expect(low.fit_score).toBe(35);
+    expect(low.decision).toBe("not_qualified");
+  });
+
+  it("thresholds are configurable", () => {
+    process.env.QUALIFY_THRESHOLD = "60";
+    expect(score({ preparing_certification: ["E6"], compliance_hiring: ["E7"] }).decision).toBe("qualified");
+  });
+
+  it("checks certification status before qualifying when research budget remains", () => {
+    const r = decide(findings({ ...saasB2B, open_roles_count: 7, found: { ...BIZ, funding_series_ac: ["E3"], open_roles: ["E4"], enterprise_pricing: ["E5"], compliance_hiring: ["E7"], targets_enterprise: ["E10"], named_enterprise_customers: ["E9"] } }), new Set(["homepage", "hiring", "pricing", "funding/news"]), true);
+    expect(r.fit_score).toBe(75);
     expect(r.decision).toBe("research_more");
+    expect(researchTargets(r, new Set(["homepage", "hiring", "pricing", "funding/news"]))).toContain("security/compliance");
+  });
+});
+
+describe("targeted research", () => {
+  it("fetches the page most likely to answer each open question", () => {
+    const r = decide(findings({ found: {} }), new Set(["homepage"]), true);
+    const t = researchTargets(r, new Set(["homepage"]));
+    expect(t.slice(0, 2)).toEqual(["product", "about"]);
+    expect(t).toContain("security/compliance");
+    expect(t).toContain("hiring");
   });
 
-  it("10. scoring is deterministic and follows the rubric", () => {
-    const s = { saas: "confirmed", stage: "series_a_c", audit: "active_or_planned", enterprise: "direct_requirement" } as const;
-    expect(computeScore(s).total).toBe(100);
-    expect(computeScore({ saas: "likely", stage: "growth_indicators", audit: "initiative_timing_uncertain", enterprise: "security_reviews" }).total).toBe(15 + 8 + 20 + 20);
-    const a = decideQualification({ classification: classification({ saas }), evidence: ev, canResearchMore: false });
-    const b = decideQualification({ classification: classification({ saas }), evidence: ev, canResearchMore: false });
-    expect(a).toEqual(b);
-  });
-
-  it("likely SaaS with a trigger needs review rather than qualifying", () => {
-    const r = decideQualification({
-      classification: classification({ saas: { level: "likely", evidence_ids: ["E6"], rationale: "" }, audit: { level: "active_or_planned", evidence_ids: ["E3"], rationale: "" } }),
-      evidence: ev,
-      canResearchMore: false,
-    });
+  it("an unresolved case becomes NEEDS_REVIEW when the research limit is reached", () => {
+    const r = finalizeUnresolved(decide(findings({ found: {} }), new Set(["homepage"]), true));
     expect(r.decision).toBe("needs_review");
+    expect(r.explanation).toMatch(/Research limit reached/);
   });
+});
 
-  it("already-certified SaaS qualifies as a renewal/expansion opportunity (default setting)", () => {
-    const certified: EvidenceLite[] = [...ev, { ref: "E9", type: "observed", text: "We are SOC 2 Type II certified and ISO 27001 certified" }];
-    const r = decideQualification({ classification: classification({ saas, audit: { level: "already_certified", evidence_ids: ["E9"], rationale: "" } }), evidence: certified, canResearchMore: false });
-    expect(r.decision).toBe("qualified");
-    expect(r.explanation).toMatch(/already certified/i);
-  });
-
-  it("already-certified still needs an observed certification quote", () => {
-    const r = decideQualification({ classification: classification({ saas, audit: { level: "already_certified", evidence_ids: ["E6"], rationale: "" } }), evidence: ev, canResearchMore: false });
-    expect(r.audit_trigger).not.toBe("already_certified");
-    expect(r.decision).toBe("needs_review");
-  });
-
-  it("competitors (outside target) are not qualified", () => {
-    const r = decideQualification({
-      classification: classification({ saas, audit: { level: "active_or_planned", evidence_ids: ["E3"], rationale: "" }, outside_target: { flag: true, reason: "compliance automation vendor", evidence_ids: ["E1"] } }),
-      evidence: ev,
-      canResearchMore: false,
-    });
-    expect(r.decision).toBe("not_qualified");
+describe("required output format", () => {
+  it("produces the spec JSON with every field", () => {
+    const r = decide(findings({ ...saasB2B, found: { ...BIZ, preparing_certification: ["E6"] } }));
+    const out = qualificationReport(r, "acme.com", "Acme");
+    expect(Object.keys(out)).toEqual([
+      "company_name",
+      "domain",
+      "business_description",
+      "total_score",
+      "qualification_status",
+      "business_model_fit",
+      "growth_stage",
+      "compliance_buying_signals",
+      "enterprise_readiness",
+      "existing_certifications",
+      "disqualification_reasons",
+      "missing_information",
+      "pages_scraped",
+      "research_summary",
+      "recommended_next_action",
+    ]);
+    expect(out.compliance_buying_signals.score).toBe(20);
+    expect(out.compliance_buying_signals.evidence[0]).toMatchObject({ criterion: expect.any(String), status: "FOUND", points_awarded: 20 });
+    expect(JSON.parse(JSON.stringify(out))).toEqual(out);
   });
 });

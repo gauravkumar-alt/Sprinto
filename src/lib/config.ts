@@ -46,9 +46,14 @@ export function getConfig() {
     research: {
       provider: str("RESEARCH_PROVIDER", ""), // "tavily" or empty (website only)
       apiKey: str("RESEARCH_API_KEY"),
-      maxPagesPerCompany: num("RESEARCH_MAX_PAGES", 8),
-      maxPagesPerRound: num("RESEARCH_MAX_PAGES_PER_ROUND", 4),
-      maxAdditionalRounds: num("RESEARCH_MAX_ROUNDS", 2),
+      /** One homepage request, then at most this many targeted page fetches per company. */
+      maxAdditionalPages: num("RESEARCH_MAX_ADDITIONAL_PAGES", 4),
+      maxPagesPerRound: num("RESEARCH_MAX_PAGES_PER_ROUND", 2),
+      maxAdditionalRounds: num("RESEARCH_MAX_ROUNDS", 3),
+      /** Cleaned content sent to the model per research pass (~2,000 tokens). */
+      contextBudgetChars: num("RESEARCH_CONTEXT_CHARS", 8000),
+      /** Render JavaScript-only pages with a headless browser when plain HTML has too little text. */
+      browserFallback: str("RESEARCH_BROWSER_FALLBACK", "true") !== "false",
       maxSearchCalls: num("RESEARCH_MAX_SEARCH_CALLS", 2),
       pageTimeoutMs: num("RESEARCH_PAGE_TIMEOUT_MS", 12_000),
       maxRedirects: num("RESEARCH_MAX_REDIRECTS", 4),
@@ -95,42 +100,73 @@ export function getConfig() {
 export type AppConfig = ReturnType<typeof getConfig>;
 
 /**
- * Initial ICP scoring rubric. These are business assumptions for the case,
- * NOT facts supplied by Sprinto. Adjust here; scoring code reads this table.
+ * 100-point qualification rubric (Sprinto Evidence Map). Points are business assumptions for the
+ * prototype; tune them here. `pages` are the page types that can answer a criterion — used to tell
+ * NOT_FOUND (a relevant page was checked) from UNKNOWN (no relevant page could be checked).
  */
-export const SCORING_RUBRIC = {
-  saas: { confirmed: 30, likely: 15, not_saas: 0, unknown: 0 },
-  stage: { series_a_c: 15, growth_indicators: 8, other_verified: 5, unknown: 0 },
-  audit: {
-    active_or_planned: 30,
-    initiative_timing_uncertain: 20,
-    already_certified: 10,
-    generic_material: 5,
-    none: 0,
+export const RUBRIC = {
+  business_model_fit: {
+    label: "Business model fit",
+    criteria: {
+      saas: { label: "Sells software as SaaS", points: 15, pages: ["homepage", "product", "pricing", "about"] },
+      b2b: { label: "Serves business customers (B2B)", points: 10, pages: ["homepage", "product", "customers", "about"] },
+      product: { label: "Identifiable software product", points: 5, pages: ["homepage", "product"] },
+    },
   },
-  enterprise: {
-    direct_requirement: 25,
-    security_reviews: 20,
-    enterprise_positioning: 5,
-    none: 0,
+  growth_stage: {
+    label: "Growth stage",
+    criteria: {
+      funding_series_ac: { label: "Series A, B or C funding", points: 15, pages: ["funding/news", "about"] },
+      open_roles: { label: "5+ open job positions", points: 5, pages: ["hiring"] },
+      enterprise_pricing: { label: "Enterprise pricing or plan", points: 5, pages: ["pricing", "enterprise"] },
+    },
+  },
+  compliance_buying_signals: {
+    label: "Compliance buying signals",
+    criteria: {
+      preparing_certification: { label: "Preparing for SOC 2 / ISO 27001 / similar", points: 20, pages: ["security/compliance"] },
+      compliance_hiring: { label: "Hiring security / compliance / GRC roles", points: 10, pages: ["hiring"] },
+      enterprise_security_reviews: { label: "Enterprise security reviews or customer compliance requirements", points: 5, pages: ["security/compliance", "enterprise"] },
+    },
+  },
+  enterprise_readiness: {
+    label: "Enterprise readiness",
+    criteria: {
+      named_enterprise_customers: { label: "Named enterprise customers or case studies", points: 5, pages: ["customers", "homepage"] },
+      targets_enterprise: { label: "Explicitly targets enterprise buyers", points: 5, pages: ["homepage", "enterprise", "pricing", "customers"] },
+    },
   },
 } as const;
 
+export type RubricCategory = keyof typeof RUBRIC;
+export type CriterionId = {
+  [C in RubricCategory]: keyof (typeof RUBRIC)[C]["criteria"];
+}[RubricCategory];
+
+export const CRITERIA: { id: CriterionId; category: RubricCategory; label: string; points: number; pages: readonly string[] }[] = (
+  Object.entries(RUBRIC) as [RubricCategory, (typeof RUBRIC)[RubricCategory]][]
+).flatMap(([category, c]) =>
+  Object.entries(c.criteria).map(([id, v]) => ({ id: id as CriterionId, category, label: v.label, points: v.points, pages: v.pages })),
+);
+
+/** Minimum open roles for the "growth" hiring criterion. */
+export const OPEN_ROLES_THRESHOLD = 5;
+
+/** Qualification thresholds (configurable). A high score never overrides a disqualification or a missing SaaS/B2B requirement. */
+export function getThresholds() {
+  const n = (k: string, d: number) => {
+    const v = Number(process.env[k]);
+    return Number.isFinite(v) && v > 0 ? v : d;
+  };
+  return { qualified: n("QUALIFY_THRESHOLD", 75), needsReview: n("REVIEW_THRESHOLD", 55) };
+}
+
 /**
- * Already-certified SaaS companies (SOC 2 / ISO 27001 in place) qualify as a renewal / expansion
- * opportunity: annual re-audits, continuous monitoring, more frameworks. Set ALREADY_CERTIFIED_QUALIFIES=false
- * for the strict case ICP (only "preparing for an audit" or "enterprise pressure" qualify).
+ * Prototype rule (Sprinto Evidence Map): a company that already holds a named certification such as
+ * SOC 2 or ISO 27001 is flagged ALREADY_CERTIFIED and disqualified. Set ALREADY_CERTIFIED_QUALIFIES=true
+ * to keep scoring them instead (renewal / expansion prospects).
  */
-export const ALREADY_CERTIFIED_QUALIFIES = (process.env.ALREADY_CERTIFIED_QUALIFIES ?? "true").trim() !== "false";
-
-/** Signal levels that count as a credible buying trigger (the ICP's OR clause). */
-export const QUALIFYING_TRIGGERS: { audit: readonly string[]; enterprise: readonly string[] } = {
-  audit: ["active_or_planned", "initiative_timing_uncertain", ...(ALREADY_CERTIFIED_QUALIFIES ? ["already_certified"] : [])],
-  enterprise: ["direct_requirement", "security_reviews"],
-};
-
-/** Whether an inferred ("likely") SaaS model may qualify. The case says "SaaS companies"; we require confirmation by default. */
-export const ALLOW_LIKELY_SAAS_TO_QUALIFY = false;
+export const ALREADY_CERTIFIED_QUALIFIES = (process.env.ALREADY_CERTIFIED_QUALIFIES ?? "false").trim() === "true";
 
 /** What Sprinto does — the only product claims emails are allowed to make. */
 export const SPRINTO_OFFERING = {

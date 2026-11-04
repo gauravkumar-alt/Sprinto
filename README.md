@@ -77,23 +77,38 @@ src/
 - Numbers in pain points and emails must appear in the cited evidence.
 - Inferences and unknowns are stored as their own evidence rows and never shown as facts.
 
-### ICP qualification (configurable in `src/lib/config.ts`)
+### Qualification engine — 100-point rubric (configurable in `src/lib/config.ts`)
+The model only **reports findings** per criterion (with evidence ids); code validates each finding against the quoted text, scores it, applies the disqualification rules and the thresholds.
 
-**Qualified** = confirmed SaaS **and** (audit/certification preparation **or** enterprise certification/security-review pressure). Funding stage is scored but is not a gate. Clear non-SaaS (or a compliance-automation competitor) → **Not qualified**. Otherwise → **Needs review** (after the research loop has had its chance). The score never overrides these rules.
+| Category | Criterion | Points |
+|---|---|---:|
+| **Business model fit (30)** | Sells software as SaaS | 15 |
+| | Serves business customers (B2B) | 10 |
+| | Identifiable software product | 5 |
+| **Growth stage (25)** | Series A, B or C funding | 15 |
+| | 5+ open job positions | 5 |
+| | Enterprise pricing or plan | 5 |
+| **Compliance buying signals (35)** | Preparing for SOC 2 / ISO 27001 / similar | 20 |
+| | Hiring security / compliance / GRC roles | 10 |
+| | Enterprise security reviews or customer compliance requirements | 5 |
+| **Enterprise readiness (10)** | Named enterprise customers or case studies | 5 |
+| | Explicitly targets enterprise buyers | 5 |
 
-| Dimension | Max | Levels |
-|---|---:|---|
-| SaaS fit | 30 | confirmed 30 · likely 15 · not SaaS / unknown 0 |
-| Stage | 15 | verified Series A–C 15 · growth indicators 8 · other verified 5 · unknown 0 |
-| Audit intent | 30 | active/planned 30 · initiative, timing unclear 20 · already certified 10 · generic 5 · none 0 |
-| Enterprise pressure | 25 | direct requirement 25 · security questionnaires/reviews 20 · enterprise positioning 5 · none 0 |
+Every criterion is stored with: name, max points, points awarded, evidence text, source URL, confidence and a status — **FOUND**, **NOT_FOUND** (a page that could answer it was checked), or **UNKNOWN** (no such page could be checked).
 
-These weights are initial business assumptions for the case, not facts supplied by Sprinto.
+**Disqualification rules (applied first, override the score):** not SaaS → NOT_QUALIFIED · primarily B2C → NOT_QUALIFIED · an existing named certification (SOC 2, ISO 27001 …) → flag **ALREADY_CERTIFIED** and NOT_QUALIFIED (set `ALREADY_CERTIFIED_QUALIFIES=true` to score them instead) · business model can't be established → NEEDS_REVIEW. Missing information is never treated as unsuitable, and no points are awarded on assumptions (e.g. "Series B" must literally appear; "preparing for SOC 2" needs a framework *and* a preparing word; a planned certification is not a held one).
 
-**Already-certified companies** (SOC 2 / ISO 27001 already in place, backed by an observed quote) qualify by default as a renewal/expansion opportunity — annual re-audits, continuous monitoring, adding frameworks — and their emails never claim they are preparing for a certification they hold. Set `ALREADY_CERTIFIED_QUALIFIES=false` for the strict case ICP (only audit preparation or enterprise pressure qualify).
+**Thresholds (`QUALIFY_THRESHOLD`, `REVIEW_THRESHOLD`):** 75–100 QUALIFIED → contact discovery, pain points, email · 55–74 NEEDS_REVIEW (fetch more pages if budget allows, else human review) · below 55 NOT_QUALIFIED. Qualification also requires confirmed SaaS **and** B2B.
 
-### Research loop
-After each qualification pass, if the decision is *research_more*, the orchestrator lists the gaps, asks the planner to choose URLs **only from already-discovered same-site candidates** (and search queries, if a search provider is configured), fetches them, extracts new verified evidence, re-extracts the profile and re-classifies. It stops at `RESEARCH_MAX_ROUNDS` (default 2), when the page budget is spent, or when a round adds no new evidence; unresolved companies become **Needs review**. Every round (gaps, action, new sources, new evidence, decision/score before → after) is stored and shown.
+**Output:** `GET /api/companies/<id>/qualification` returns the required JSON (company_name, domain, business_description, total_score, qualification_status, the four category objects with their evidence, existing_certifications, disqualification_reasons, missing_information, pages_scraped, research_summary, recommended_next_action). The company page's Qualification tab shows the same breakdown with source links, and the dashboard filters by status.
+
+### Research loop (homepage first, targeted, bounded)
+1. **One homepage request** (plain HTTP; headings, paragraphs and metadata kept; navigation, footers, cookie banners, scripts and duplicates removed). If the page renders with JavaScript and plain HTML has too little text, a headless browser (**Playwright**) renders it — same robots.txt rules, top-level navigation locked to the company's domain, private/internal addresses blocked, images/fonts/media skipped.
+2. After each pass, code checks the five critical questions — *B2B SaaS? what does it sell? growth stage? compliance pressure? already certified?* — and fetches only the page type most likely to answer each open one: business model → Product/About · growth → Careers/press · compliance & certification → Security/Trust (incl. `trust.` subdomains) · enterprise → Customers/Pricing. A page type that doesn't exist on the site counts as checked.
+3. **At most four additional page fetches per company** (`RESEARCH_MAX_ADDITIONAL_PAGES`, 2 per round). Pages are cached and never fetched twice. If critical evidence is still missing at the limit → NEEDS_REVIEW.
+4. Cleaned content is **condensed to ~2,000 tokens** per pass (`RESEARCH_CONTEXT_CHARS`), keeping the signal-bearing lines verbatim so every quote is still verified against the full page.
+
+Install the browser once for the JavaScript fallback: `npx playwright-core install chromium-headless-shell` (disable with `RESEARCH_BROWSER_FALLBACK=false`).
 
 ### Contact selection
 Hunter Domain Search results are mapped field-by-field (missing names/titles/verification stay `null`), cached per domain (`HUNTER_CACHE_DAYS`) and counted against `HUNTER_MONTHLY_LIMIT`. Ranking is deterministic and stage-aware: early-stage → CTO/founder/COO weighted up; larger companies → CISO/Head of Security/Compliance. Contacts need a name, a relevant title and a valid on-domain email to be eligible. No eligible person → **Contact not found**, and the company page offers manual entry (e.g. from Apollo's web UI). Apollo is not scraped or called.
@@ -160,7 +175,7 @@ DEMO_INBOX_EMAIL=you@gmail.com
 ## Testing
 
 ```bash
-npm test            # vitest: 74 tests
+npm test            # vitest: 79 tests
 npm run typecheck
 npm run lint
 npm run build

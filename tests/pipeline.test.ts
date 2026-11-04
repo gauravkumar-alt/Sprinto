@@ -7,7 +7,7 @@ import type { EmailProvider } from "@/lib/providers/email/types";
 import { EmailSendError } from "@/lib/providers/email/types";
 import type { CrawlSession, ResearchProvider } from "@/lib/providers/research/types";
 import * as repo from "@/lib/repo";
-import { ScriptedLLM, classification, freshDb, useProviders } from "./helpers";
+import { ScriptedLLM, findings, freshDb, useProviders } from "./helpers";
 
 function run(domain: string) {
   const id = repo.upsertCompany(domain, "mock");
@@ -52,50 +52,66 @@ describe("full pipeline with mock providers", () => {
     const a = run("northpeak-consulting.example");
     const b = run("orbitboard.example");
     expect(await processCompany(a.runId)).toBe("not_qualified");
-    expect(await processCompany(b.runId)).toBe("needs_review");
+    expect(await processCompany(b.runId)).toBe("not_qualified"); // SaaS, but no compliance signal on checked pages
     expect(contacts.calls).toBe(0);
     expect(stages(a.runId).contact).toBe("skipped");
     expect(getDb().prepare("SELECT COUNT(*) n FROM emails").get()).toEqual({ n: 0 });
   });
 
-  it("research loop fetches more pages when information is missing (ledgerly)", async () => {
+  it("homepage first, then targeted pages (ledgerly → borderline NEEDS_REVIEW)", async () => {
     useProviders();
     const { companyId, runId } = run("ledgerly.example");
-    expect(await processCompany(runId)).toBe("email_simulated");
-    const rr = getDb().prepare("SELECT rounds_json, research_rounds FROM research_runs WHERE company_id=?").get(companyId) as { rounds_json: string; research_rounds: number };
-    expect(rr.research_rounds).toBe(1);
-    expect(JSON.parse(rr.rounds_json)[0].decisionAfter).toBe("qualified");
+    expect(await processCompany(runId)).toBe("needs_review");
+    const pages = getDb().prepare("SELECT url, round FROM pages WHERE company_id=? ORDER BY id").all(companyId) as { url: string; round: number }[];
+    expect(pages[0]).toMatchObject({ url: "https://ledgerly.example/", round: 0 }); // one initial homepage request
+    expect(pages.filter((p) => p.round > 0).length).toBeLessThanOrEqual(4); // at most four additional fetches
+    expect(pages.some((p) => p.url.endsWith("/security"))).toBe(true); // compliance question → security page
+    const q = repo.latestQualification(companyId)!;
+    expect(q.fit_score).toBeGreaterThanOrEqual(55);
+    expect(q.fit_score).toBeLessThan(75);
+    expect(q.categories.compliance_buying_signals.score).toBeGreaterThan(0);
   });
 
-  it("11. research loop stops at the configured maximum and marks needs_review", async () => {
-    let n = 0;
+  it("qualifies vaultlane with evidence from targeted pages and sends (simulated)", async () => {
+    useProviders();
+    const { companyId, runId } = run("vaultlane.example");
+    expect(await processCompany(runId)).toBe("email_simulated");
+    const q = repo.latestQualification(companyId)!;
+    expect(q.decision).toBe("qualified");
+    expect(q.fit_score).toBeGreaterThanOrEqual(75);
+    expect(q.pages_scraped.length).toBeLessThanOrEqual(5);
+  });
+
+  it("11. research stops at four additional fetches and never loops forever", async () => {
+    let fetches = 0;
+    const tags = ["product", "about", "hiring", "funding/news", "security/compliance", "customers", "pricing", "enterprise"];
     const endless: ResearchProvider = {
       name: "endless",
       dataSource: "mock",
       startSession: (domain): CrawlSession => ({
         domain,
         dataSource: "mock",
-        initialCrawl: async () => ({ pages: [page(domain, n++)], log: [], reachable: true }),
-        fetchUrls: async () => ({ pages: [page(domain, n++)], log: [] }),
-        unvisitedCandidates: () => [{ url: `https://${domain}/more-${n}`, score: 50, tag: "security/compliance" }],
-        pagesFetched: () => n,
+        initialCrawl: async () => ({ pages: [page(domain, 0, "/")], log: [], reachable: true }),
+        fetchUrls: async (urls) => {
+          fetches++;
+          return { pages: [page(domain, fetches, new URL(urls[0]).pathname)], log: [] };
+        },
+        unvisitedCandidates: () => tags.map((tag, i) => ({ url: `https://${domain}/${["product", "about", "careers", "press", "security", "customers", "pricing", "enterprise"][i]}`, score: 50, tag })),
+        pagesFetched: () => fetches + 1,
       }),
     };
     const llm = new ScriptedLLM({
-      missing_information: (input) => ({ gaps: [], urls_to_fetch: [(input as { candidate_urls: { url: string }[] }).candidate_urls[0].url], search_queries: [], reasoning_summary: "" }),
       qualification: (input) => {
         const ref = (input as { evidence: { ref: string }[] }).evidence[0].ref;
-        return classification({ saas: { level: "confirmed", evidence_ids: [ref], rationale: "" } });
+        return findings({ is_saas: "yes", audience: "b2b", found: { saas: [ref], b2b: [ref], product: [ref] } });
       },
     });
     useProviders({ research: endless, llm });
     const { runId } = run("loop.example");
-    expect(await processCompany(runId)).toBe("needs_review");
-    expect(llm.calls.missing_information).toBe(2); // RESEARCH_MAX_ROUNDS default
-    expect(llm.calls.qualification).toBe(3);
-    const q = repo.latestQualification(repo.getRun(runId)!.company_id)!;
-    expect(q.decision).toBe("needs_review");
-    expect(q.explanation).not.toMatch(/running another/);
+    const outcome = await processCompany(runId);
+    expect(["needs_review", "not_qualified"]).toContain(outcome);
+    expect(fetches).toBeLessThanOrEqual(4);
+    expect(llm.calls.qualification).toBeLessThanOrEqual(4); // initial + at most 3 rounds
   });
 
   it("does not crash the batch when a stage fails (malformed model output)", async () => {
@@ -185,8 +201,8 @@ describe("full pipeline with mock providers", () => {
   });
 });
 
-function page(domain: string, i: number) {
-  return { url: `https://${domain}/p${i}`, title: "p", text: `Loop is a SaaS platform with subscription billing, page ${i}.`, publishedAt: null, retrievedAt: new Date().toISOString(), sourceType: "website" as const };
+function page(domain: string, i: number, path = `/p${i}`) {
+  return { url: `https://${domain}${path}`, title: "p", text: `Loop is a SaaS platform with subscription billing for business teams, page ${i}.`, publishedAt: null, retrievedAt: new Date().toISOString(), sourceType: "website" as const };
 }
 
 /** A qualified real-domain company with a validated, real (non-mock) email ready to send. */

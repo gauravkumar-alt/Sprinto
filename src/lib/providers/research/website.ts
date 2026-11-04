@@ -6,6 +6,7 @@
 import { getConfig } from "@/lib/config";
 import { safeFetch } from "@/lib/security/ssrf";
 import { KeyedRateLimiter, errorMessage, sha256 } from "@/lib/util";
+import { renderWithBrowser } from "./browser";
 import { extractHtml, parseSitemap } from "./html";
 import { COMMON_PATHS, TRUST_SUBDOMAINS, type CandidateUrl, sameSite, scoreUrl } from "./prioritize";
 import { ALLOW_ALL, parseRobots, type RobotsRules } from "./robots";
@@ -169,7 +170,7 @@ class WebsiteCrawlSession implements CrawlSession {
     const pages: FetchedPage[] = [];
     let attempts = 0;
     for (const raw of urls) {
-      if (pages.length >= maxPages || this.fetchedCount >= this.cfg.maxPagesPerCompany || attempts >= maxPages * 2) break;
+      if (pages.length >= maxPages || this.fetchedCount >= 1 + this.cfg.maxAdditionalPages || attempts >= maxPages * 2) break;
       attempts++;
       let u: URL;
       try {
@@ -222,7 +223,19 @@ class WebsiteCrawlSession implements CrawlSession {
         log.push({ url, outcome: "not_html", detail: r.contentType });
         return null;
       }
-      const ex = extractHtml(r.body, r.finalUrl, this.cfg.maxCharsPerPage);
+      let ex = extractHtml(r.body, r.finalUrl, this.cfg.maxCharsPerPage);
+      let rendered = false;
+      // JavaScript-rendered page: plain HTML has too little visible text → render it in a headless browser.
+      if (!ex.loginWall && ex.visibleChars < 400 && this.cfg.browserFallback) {
+        const page = await renderWithBrowser(r.finalUrl, this.domain, { timeoutMs: this.cfg.pageTimeoutMs * 2, userAgent: this.cfg.userAgent });
+        if (page) {
+          const ex2 = extractHtml(page.html, page.finalUrl, this.cfg.maxCharsPerPage);
+          if (ex2.visibleChars > ex.visibleChars) {
+            ex = ex2;
+            rendered = true;
+          }
+        }
+      }
       if (ex.loginWall) {
         log.push({ url, outcome: "login_wall", detail: "login-protected content is not accessed" });
         return null;
@@ -238,7 +251,7 @@ class WebsiteCrawlSession implements CrawlSession {
       }
       this.hashes.add(hash);
       this.fetchedCount++;
-      log.push({ url: r.finalUrl, outcome: "fetched" });
+      log.push({ url: r.finalUrl, outcome: "fetched", detail: rendered ? "rendered with headless browser" : undefined });
       return {
         page: {
           url: r.finalUrl,

@@ -154,28 +154,79 @@ export type StageLevel = z.infer<typeof StageLevel>;
 export type AuditLevel = z.infer<typeof AuditLevel>;
 export type EnterpriseLevel = z.infer<typeof EnterpriseLevel>;
 
-const dim = <T extends z.ZodType>(level: T) =>
-  z.object({ level, evidence_ids: z.array(z.string()), rationale: z.string() });
+/** qualificationPrompt output: per-criterion FINDINGS. The model reports facts with evidence; code scores. */
+export const CRITERION_IDS = [
+  "saas",
+  "b2b",
+  "product",
+  "funding_series_ac",
+  "open_roles",
+  "enterprise_pricing",
+  "preparing_certification",
+  "compliance_hiring",
+  "enterprise_security_reviews",
+  "named_enterprise_customers",
+  "targets_enterprise",
+] as const;
 
-/** qualificationPrompt output: the model classifies signals; it never scores. */
-export const QualificationClassificationOutput = z.object({
-  saas: dim(SaasLevel),
-  stage: dim(StageLevel).extend({ stage_label: z.string() }),
-  audit: dim(AuditLevel),
-  enterprise: dim(EnterpriseLevel),
-  outside_target: z.object({ flag: z.boolean(), reason: z.string(), evidence_ids: z.array(z.string()) }),
-  missing_information: z.array(
-    z.object({ dimension: z.enum(["saas", "stage", "audit", "enterprise"]), question: z.string() }),
+export const QualificationFindingsOutput = z.object({
+  company_name: z.string(),
+  business_description: z.string(),
+  product_or_service: z.string(),
+  is_saas: z.enum(["yes", "no", "unknown"]),
+  audience: z.enum(["b2b", "b2c", "both", "unknown"]),
+  funding_stage: z.string(),
+  open_roles_count: z.number().nullable(),
+  criteria: z.array(
+    z.object({
+      id: z.enum(CRITERION_IDS),
+      found: z.boolean(),
+      evidence_ids: z.array(z.string()),
+      confidence: z.number(),
+      note: z.string(),
+    }),
   ),
+  existing_certifications: z.array(z.object({ name: z.string(), evidence_ids: z.array(z.string()) })),
+  outside_target: z.object({ flag: z.boolean(), reason: z.string(), evidence_ids: z.array(z.string()) }),
 });
-export type QualificationClassification = z.infer<typeof QualificationClassificationOutput>;
+export type QualificationFindings = z.infer<typeof QualificationFindingsOutput>;
 
 export type QualificationDecision = "qualified" | "not_qualified" | "needs_review" | "research_more";
+export type CriterionStatus = "FOUND" | "NOT_FOUND" | "UNKNOWN";
+
+export interface CriterionResult {
+  id: string;
+  criterion: string;
+  max_points: number;
+  points: number;
+  status: CriterionStatus;
+  evidence: { ref: string; text: string; source_url: string | null }[];
+  confidence: number;
+  note: string;
+}
+
+export interface CategoryResult {
+  label: string;
+  score: number;
+  max: number;
+  criteria: CriterionResult[];
+}
 
 export interface QualificationResult {
   decision: QualificationDecision;
   fit_score: number;
-  score_breakdown: { saas: number; stage: number; audit: number; enterprise: number };
+  /** Per-category breakdown (100-point rubric). */
+  categories: Record<"business_model_fit" | "growth_stage" | "compliance_buying_signals" | "enterprise_readiness", CategoryResult>;
+  existing_certifications: { name: string; evidence_refs: string[] }[];
+  flags: string[]; // e.g. ALREADY_CERTIFIED
+  disqualification_reasons: string[];
+  missing_information: string[];
+  pages_scraped: string[];
+  company_name: string;
+  business_description: string;
+  research_summary: string;
+  recommended_next_action: string;
+  // Summary signals derived from the findings (used by contact ranking, pain points, emails).
   saas_status: SaasLevel;
   stage_status: StageLevel;
   stage_label: string;
@@ -184,7 +235,6 @@ export interface QualificationResult {
   has_buying_trigger: boolean;
   reasons: string[];
   evidence_ids: string[];
-  missing_information: string[];
   adjustments: string[];
   confidence: number;
   explanation: string;

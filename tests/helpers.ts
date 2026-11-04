@@ -5,7 +5,7 @@ import { MockEmailProvider } from "@/lib/providers/email/mock";
 import { MockLLMProvider } from "@/lib/providers/llm/mock";
 import type { LLMProvider, LLMRawResponse, LLMRequest, PromptName } from "@/lib/providers/llm/types";
 import { MockResearchProvider } from "@/lib/providers/research/mock";
-import type { QualificationClassification } from "@/lib/schemas";
+import { CRITERION_IDS, type QualificationFindings } from "@/lib/schemas";
 
 export function freshDb() {
   process.env.APP_MODE = "demo";
@@ -55,14 +55,20 @@ export function useProviders(over: Partial<ProviderSet> = {}) {
   return p;
 }
 
-export function classification(over: Partial<QualificationClassification> = {}): QualificationClassification {
+/** Findings builder: every criterion not found unless listed in `found` as { id: evidenceIds }. */
+export function findings(over: Partial<QualificationFindings> & { found?: Record<string, string[]> } = {}): QualificationFindings {
+  const { found = {}, ...rest } = over;
   return {
-    saas: { level: "unknown", evidence_ids: [], rationale: "" },
-    stage: { level: "unknown", evidence_ids: [], rationale: "", stage_label: "Unknown" },
-    audit: { level: "none", evidence_ids: [], rationale: "" },
-    enterprise: { level: "none", evidence_ids: [], rationale: "" },
+    company_name: "Acme",
+    business_description: "Acme builds software",
+    product_or_service: "Platform",
+    is_saas: "unknown",
+    audience: "unknown",
+    funding_stage: "Unknown",
+    open_roles_count: null,
+    criteria: CRITERION_IDS.map((id) => ({ id, found: Boolean(found[id]), evidence_ids: found[id] ?? [], confidence: 0.8, note: "" })),
+    existing_certifications: [],
     outside_target: { flag: false, reason: "", evidence_ids: [] },
-    missing_information: [],
-    ...over,
+    ...rest,
   };
 }

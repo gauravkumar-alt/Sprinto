@@ -227,3 +227,24 @@ td.rail.ok span { background: var(--ok); } td.rail.warn span { background: var(-
 
 .empty { color: var(--muted); padding: 28px; text-align: center; }
 details > summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+
+/* rubric breakdown (table) */
+.breakdown { display: inline-flex; gap: 3px; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; }
+.breakdown span { min-width: 24px; text-align: center; padding: 1px 4px; border-radius: 5px; background: var(--panel-2); border: 1px solid var(--border); color: var(--muted); }
+.breakdown span.hot { background: var(--ok-bg); color: var(--ok); border-color: transparent; }
+
+/* rubric table (company page) */
+.rubric-cat { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.rubric-cat + .rubric-cat { margin-top: 12px; }
+.rubric-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--panel-2); border-bottom: 1px solid var(--border); }
+.rubric-head .track { flex: 1; max-width: 160px; height: 6px; border-radius: 3px; background: var(--panel); border: 1px solid var(--border); overflow: hidden; }
+.rubric-head .fill { height: 100%; background: var(--accent); }
+.crit { display: grid; grid-template-columns: minmax(0, 1fr) 64px 92px; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 13px; align-items: start; }
+.crit:last-child { border-bottom: 0; }
+.crit .pts { font-variant-numeric: tabular-nums; font-weight: 650; text-align: right; }
+.crit .ev { grid-column: 1 / -1; font-size: 12.5px; color: var(--muted); margin-top: -4px; }
+.crit .ev a { word-break: break-all; }
+@media (max-width: 520px) { .crit { grid-template-columns: minmax(0, 1fr) 52px; } .crit .st { grid-column: 1 / -1; } }
+.st-FOUND { background: var(--ok-bg); color: var(--ok); }
+.st-NOT_FOUND { background: var(--panel-2); color: var(--muted); border: 1px solid var(--border); }
+.st-UNKNOWN { background: var(--warn-bg); color: var(--warn); }

@@ -42,7 +42,7 @@ export const MOCK_SITES: Record<string, MockSite> = {
     linked: {
       "/": {
         title: "Vaultlane — Spend management for finance teams",
-        text: "Vaultlane is a cloud-based spend management platform for mid-market and enterprise finance teams.\nTeams subscribe per seat and manage cards, approvals and reimbursements in one SaaS workspace.\nTrusted by 400+ finance teams, including several Fortune 500 companies.",
+        text: "Vaultlane is a cloud-based spend management platform for mid-market and enterprise finance teams.\nTeams subscribe per seat and manage cards, approvals and reimbursements in one SaaS workspace.\nCustomers include Northwind Logistics and Contoso Bank, alongside 400+ finance teams.",
       },
       "/about": {
         title: "About Vaultlane",
@@ -61,7 +61,11 @@ export const MOCK_SITES: Record<string, MockSite> = {
     deep: {
       "/careers": {
         title: "Careers at Vaultlane",
-        text: "We are hiring a Security & Compliance Engineer to help lead our SOC 2 and ISO 27001 programs.",
+        text: "We have 7 open roles across engineering, sales and operations.\nWe are hiring a Security & Compliance Engineer to help lead our SOC 2 and ISO 27001 programs.",
+      },
+      "/pricing": {
+        title: "Pricing — Vaultlane",
+        text: "Growth plan billed per seat. Enterprise plan with SSO, audit logs and a dedicated success manager.",
       },
     },
     contacts: [
@@ -90,7 +94,7 @@ export const MOCK_SITES: Record<string, MockSite> = {
     deep: {
       "/security": {
         title: "Security — Ledgerly",
-        text: "Enterprise customers routinely send us security questionnaires as part of their vendor procurement process.\nSeveral enterprise prospects require ISO 27001 certification before signing, and we are working to formalise our security controls.",
+        text: "Enterprise customers routinely send us security questionnaires as part of their vendor procurement process.\nSeveral enterprise prospects require ISO 27001 certification before signing, so we are preparing for ISO 27001 certification this year.",
       },
       "/customers": {
         title: "Customers — Ledgerly",

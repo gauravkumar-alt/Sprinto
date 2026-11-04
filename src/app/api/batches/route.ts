@@ -23,6 +23,7 @@ export async function POST(req: Request) {
 
   const seen = new Set<string>();
   const valid: string[] = [];
+  const names = new Map<string, string>();
   const duplicates = [...fromText.duplicates, ...fromCsv.duplicates];
   const invalid = [...fromText.invalid, ...fromCsv.invalid];
   for (const v of [...fromText.valid, ...fromCsv.valid]) {
@@ -31,6 +32,7 @@ export async function POST(req: Request) {
     else {
       seen.add(v.domain);
       valid.push(v.domain);
+      if (v.name) names.set(v.domain, v.name);
     }
   }
   if (valid.length === 0) return NextResponse.json({ error: "No valid domains to process.", invalid, duplicates }, { status: 400 });
@@ -42,7 +44,7 @@ export async function POST(req: Request) {
   const toRun = valid.filter((d) => !alreadyRunning.includes(d));
   if (toRun.length === 0) return NextResponse.json({ error: "All of these companies are already being processed.", alreadyRunning }, { status: 409 });
 
-  const companyIds = toRun.map((d) => repo.upsertCompany(d, isMockDomain(d) ? "mock" : "real"));
+  const companyIds = toRun.map((d) => repo.upsertCompany(d, isMockDomain(d) ? "mock" : "real", names.get(d)));
   const { batchId, runIds } = repo.createBatch(cfg.campaignId, cfg.mode, companyIds);
   runInBackground(runIds);
   return NextResponse.json({ batchId, runIds, accepted: toRun, alreadyRunning, invalid, duplicates });

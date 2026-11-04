@@ -93,6 +93,15 @@ export function listCompanies() {
       decision: q?.decision ?? null,
       reason: qr?.explanation ?? null,
       signals: qr ? { saas: qr.saas_status, audit: qr.audit_trigger, enterprise: qr.enterprise_pressure } : null,
+      breakdown: qr?.categories
+        ? {
+            business: qr.categories.business_model_fit.score,
+            growth: qr.categories.growth_stage.score,
+            compliance: qr.categories.compliance_buying_signals.score,
+            enterprise: qr.categories.enterprise_readiness.score,
+          }
+        : null,
+      disqualification: [...(qr?.flags ?? []), ...(qr?.disqualification_reasons ?? [])],
       contactName: contact?.name ?? null,
       contactTitle: contact?.title ?? null,
       painPoint1: pps[0]?.statement ?? null,

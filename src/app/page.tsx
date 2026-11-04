@@ -16,6 +16,8 @@ type Company = {
   decision: string | null;
   reason: string | null;
   signals: { saas: string; audit: string; enterprise: string } | null;
+  breakdown: { business: number; growth: number; compliance: number; enterprise: number } | null;
+  disqualification: string[];
   contactName: string | null;
   contactTitle: string | null;
   painPoint1: string | null;
@@ -37,6 +39,11 @@ const MOCK_DEMO = "vaultlane.example\nledgerly.example\nnorthpeak-consulting.exa
 function shortReason(c: Company): string {
   const s = c.signals;
   if (!s) return "—";
+  if (c.disqualification?.includes("ALREADY_CERTIFIED") && c.decision === "not_qualified") return "Already certified";
+  const dq = c.disqualification?.find((d) => d !== "ALREADY_CERTIFIED");
+  if (dq && c.decision === "not_qualified") return dq.startsWith("Not a SaaS") ? "Not SaaS" : dq.startsWith("Primarily B2C") ? "B2C" : "Outside target";
+  if (c.breakdown && c.decision === "needs_review") return c.signals?.saas !== "confirmed" ? "Model unclear" : "Borderline";
+  if (c.breakdown && c.decision === "not_qualified") return c.breakdown.compliance === 0 ? "No compliance signal" : "Low score";
   const audit = ["active_or_planned", "initiative_timing_uncertain"].includes(s.audit);
   const ent = ["direct_requirement", "security_reviews"].includes(s.enterprise);
   if (c.decision === "qualified") {
@@ -60,6 +67,7 @@ export default function Dashboard() {
   const [submitting, setSubmitting] = useState(false);
   const [msg, setMsg] = useState<{ kind: "info" | "bad"; text: string } | null>(null);
   const [activeBatch, setActiveBatch] = useState<number | null>(null);
+  const [filter, setFilter] = useState<"all" | "qualified" | "needs_review" | "not_qualified">("all");
 
   const load = useCallback(async () => {
     try {
@@ -172,7 +180,7 @@ export default function Dashboard() {
                 </button>
               )}
             </div>
-            <textarea placeholder={"acme.com\nexample-saas.io"} value={text} onChange={(e) => setText(e.target.value)} aria-label="Company domains, one per line" />
+            <textarea placeholder={"acme.com\nAcme Inc | acme.io"} value={text} onChange={(e) => setText(e.target.value)} aria-label="Company domains, one per line" />
             {(text.trim() || csv) && (
               <div className="sub" style={{ marginTop: 6 }}>
                 <b style={{ color: "var(--text)" }}>{preview.unique.length}</b> valid
@@ -246,7 +254,20 @@ export default function Dashboard() {
       <section className="panel" style={{ marginTop: 16 }}>
         <div className="panel-head">
           <h2>Results</h2>
-          {m && m.llmCalls > 0 && <span className="faint">{m.llmCalls} AI calls{m.llmCostUsd > 0 ? ` · ~$${m.llmCostUsd.toFixed(2)}` : ""}</span>}
+          <div className="filters">
+            {(
+              [
+                ["all", "All"],
+                ["qualified", "Qualified"],
+                ["needs_review", "Needs review"],
+                ["not_qualified", "Not qualified"],
+              ] as const
+            ).map(([k, label]) => (
+              <button key={k} className={`filter${filter === k ? " on" : ""}`} onClick={() => setFilter(k)}>
+                {label} {(data?.companies ?? []).filter((c) => k === "all" || c.decision === k).length}
+              </button>
+            ))}
+          </div>
         </div>
         {data?.companies.length ? (
           <div className="table-wrap">
@@ -256,6 +277,7 @@ export default function Dashboard() {
                   <th style={{ padding: 0 }} />
                   <th>Company</th>
                   <th>Score</th>
+                  <th title="Business model · Growth · Compliance · Enterprise">Breakdown</th>
                   <th>Status</th>
                   <th>Why</th>
                   <th>Decision-maker</th>
@@ -264,7 +286,7 @@ export default function Dashboard() {
                 </tr>
               </thead>
               <tbody>
-                {data.companies.map((c) => {
+                {data.companies.filter((c) => filter === "all" || c.decision === filter).map((c) => {
                   const status = c.run?.status === "running" || c.run?.status === "queued" ? c.run.status : c.status;
                   return (
                     <tr key={c.id} className="clickable" onClick={() => router.push(`/companies/${c.id}`)}>
@@ -277,6 +299,18 @@ export default function Dashboard() {
                         </div>
                       </td>
                       <td><Meter value={c.score} status={c.decision} /></td>
+                      <td>
+                        {c.breakdown ? (
+                          <span className="breakdown" title={`Business model ${c.breakdown.business}/30 · Growth ${c.breakdown.growth}/25 · Compliance ${c.breakdown.compliance}/35 · Enterprise ${c.breakdown.enterprise}/10`}>
+                            <span>{c.breakdown.business}</span>
+                            <span>{c.breakdown.growth}</span>
+                            <span className={c.breakdown.compliance ? "hot" : ""}>{c.breakdown.compliance}</span>
+                            <span>{c.breakdown.enterprise}</span>
+                          </span>
+                        ) : (
+                          <span className="faint" title="Assessed with the previous rubric — re-run to see the breakdown">—</span>
+                        )}
+                      </td>
                       <td><StatusBadge status={status} /></td>
                       <td title={c.reason ?? undefined}>{shortReason(c)}</td>
                       <td>
@@ -305,6 +339,7 @@ export default function Dashboard() {
                 })}
               </tbody>
             </table>
+            {m && m.llmCalls > 0 && <p className="faint" style={{ fontSize: 12, margin: "10px 18px 14px" }}>{m.llmCalls} AI calls{m.llmCostUsd > 0 ? ` · ~$${m.llmCostUsd.toFixed(2)}` : ""} · Breakdown = business model · growth · compliance · enterprise</p>}
           </div>
         ) : (
           <div className="empty">No companies yet.</div>

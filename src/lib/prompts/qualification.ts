@@ -1,47 +1,61 @@
-import { QualificationClassificationOutput, type CompanyProfile } from "@/lib/schemas";
+import { OPEN_ROLES_THRESHOLD } from "@/lib/config";
+import { QualificationFindingsOutput, type CompanyProfile } from "@/lib/schemas";
 import { HONESTY_RULES, UNTRUSTED_DATA_RULES, json, renderEvidence, type EvidenceView } from "./common";
 
 export interface QualificationPromptInput {
   domain: string;
-  profile: Omit<CompanyProfile, "source_evidence_ids">;
+  company_name_hint: string | null;
+  profile: Omit<CompanyProfile, "source_evidence_ids"> | null;
+  pages_checked: string[];
   evidence: EvidenceView[];
 }
 
 export const qualificationPrompt = {
   name: "qualification" as const,
-  schema: QualificationClassificationOutput,
-  system: `ROLE: You are the ICP qualification analyst for Sprinto (compliance automation for SaaS companies).
+  schema: QualificationFindingsOutput,
+  system: `ROLE: You are a research analyst qualifying prospects for Sprinto, which automates SOC 2, ISO 27001 and GDPR compliance for SaaS companies.
 
-SPRINTO'S ICP: SaaS companies, typically Series A–C, that are EITHER preparing for a compliance audit/certification OR facing pressure from enterprise customers to get certified. Either trigger is enough (OR, not AND). Funding stage supports prioritisation but is not a gate.
+TASK: Report FINDINGS for each rubric criterion below, citing evidence ids. You do NOT score and you do NOT decide — deterministic code does both from your findings.
 
-TASK: Classify the evidence into four dimensions. You classify; you do NOT score and you do NOT make the final decision — deterministic code does both.
+FIELDS:
+- company_name, business_description (one sentence), product_or_service (a few words).
+- is_saas: "yes" only if evidence shows software sold as a cloud/subscription service; "no" if evidence shows services/consulting/hardware/marketplace without a SaaS product (cite it under the "saas" criterion); else "unknown".
+- audience: "b2b" (sells to businesses), "b2c" (consumers), "both", or "unknown".
+- funding_stage: the stage exactly as stated (e.g. "Series B"), else "Unknown".
+- open_roles_count: number of open job positions if a careers page lists them, else null. Do not estimate.
 
-DIMENSIONS AND LEVELS:
-- saas.level: confirmed (evidence directly shows a subscription/cloud software product) | likely (software company, delivery model only inferred) | not_saas (evidence shows services/consulting/non-software business) | unknown
-- stage.level: series_a_c (a Series A, B or C round is explicitly stated) | growth_indicators (stage not stated but credible growth evidence: expansion, rapid customer/employee growth) | other_verified (another stage explicitly stated: seed, Series D+, public, bootstrapped) | unknown. stage_label = the stage as stated, or "Unknown".
-- audit.level: active_or_planned (explicitly preparing for / planning / undergoing a certification or audit) | initiative_timing_uncertain (clear compliance initiative, e.g. "working towards", hiring for a compliance programme, but no timing) | already_certified (already holds SOC 2/ISO 27001 etc. with no stated new audit) | generic_material (generic security/privacy wording only) | none
-- enterprise.level: direct_requirement (customers/prospects/procurement explicitly require certification) | security_reviews (documented security questionnaires or enterprise security reviews) | enterprise_positioning (enterprise plans/customers/logos without evidence of compliance pressure) | none
-- outside_target.flag: true only for a clear reason the company is outside the target (e.g. it is itself a compliance-automation vendor, or a government agency). Logos alone never prove compliance pressure.
+CRITERIA — one entry per id, found=true only with direct evidence:
+- saas: software delivered as SaaS / subscription / cloud platform.
+- b2b: customers are businesses / teams / companies.
+- product: an identifiable software product or platform.
+- funding_series_ac: a Series A, B or C round is explicitly stated.
+- open_roles: ${OPEN_ROLES_THRESHOLD}+ open positions are listed (also fill open_roles_count).
+- enterprise_pricing: an Enterprise plan / enterprise pricing tier.
+- preparing_certification: the company says it is preparing for, planning, pursuing or undergoing SOC 2 / ISO 27001 / similar (e.g. "SOC 2 in progress", "pending"). Already holding a certification is NOT this — report it under existing_certifications.
+- compliance_hiring: an open role in security, compliance, GRC, risk, privacy or information security.
+- enterprise_security_reviews: customers' security reviews, security questionnaires, vendor/procurement assessments, or customer compliance requirements.
+- named_enterprise_customers: named enterprise customers, logos or case studies.
+- targets_enterprise: explicitly sells to large businesses / enterprise buyers.
 
-DISTINCTIONS THAT MATTER:
-- Preparing for certification ≠ already certified ≠ merely mentioning compliance.
-- Enterprise customer logos alone are enterprise_positioning, not pressure.
-- Every level above unknown/none must cite evidence_ids; levels that claim direct facts must cite observed evidence.
+existing_certifications: certifications the company ALREADY HOLDS (e.g. "SOC 2 Type II certified", "ISO 27001 certified", "SOC 2 report available"), each with evidence ids. Do not include ones that are planned or in progress.
+outside_target.flag: true only for a clear reason it is not a prospect (e.g. it sells compliance automation itself).
 
-missing_information: list the specific gaps that block a confident decision and could plausibly be resolved by more public research (e.g. "Is there a security/trust page describing certification plans?").
+STRICT RULES:
+- Generic "we take security seriously" or "your data is encrypted" is NOT a compliance buying signal.
+- Customer logos alone are not enterprise security reviews.
+- found=false with an empty evidence_ids list when there is no direct evidence. Never guess.
+- confidence 0-1 per criterion.
 
 ${HONESTY_RULES}
 
 ${UNTRUSTED_DATA_RULES}`,
   buildUser(input: QualificationPromptInput): string {
-    return `Company domain: ${input.domain}
-
-STRUCTURED PROFILE (derived from the evidence below):
-${json(input.profile)}
-
+    return `Company domain: ${input.domain}${input.company_name_hint ? `\nName given by the user: ${input.company_name_hint}` : ""}
+Page types checked so far: ${input.pages_checked.join(", ") || "none"}
+${input.profile ? `\nPROFILE (derived from the same evidence):\n${json({ description: input.profile.description, business_model: input.profile.business_model, target_customer: input.profile.target_customer, funding_stage: input.profile.funding_stage })}\n` : ""}
 EVIDENCE:
 ${renderEvidence(input.evidence)}
 
-Return the classification JSON object.`;
+Return the findings JSON object with all 11 criteria.`;
   },
 };

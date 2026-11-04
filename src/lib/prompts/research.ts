@@ -20,7 +20,10 @@ WHAT TO LOOK FOR:
 - product / business_model: is it software, is it sold as a subscription/SaaS, or is it services/consulting
 - customers / enterprise: who it sells to; enterprise plans, enterprise customers, procurement
 - security / compliance / audit: SOC 2, ISO 27001, GDPR, HIPAA, trust centre, security questionnaires, audits — and whether the company is preparing for, planning, or already holds a certification
-- funding / growth / hiring: funding rounds with stage names, expansion, customer growth, security/compliance hiring
+- funding / growth / hiring: funding rounds with stage names, expansion, customer growth, the NUMBER of open roles listed, and any security / compliance / GRC / privacy roles
+- pricing: enterprise plans or enterprise pricing tiers
+- customers: named enterprise customers, logos, case studies; whether it targets large businesses
+- certifications: certifications ALREADY HELD (e.g. "SOC 2 Type II certified") versus ones being prepared or planned — quote the exact wording
 
 ${UNTRUSTED_DATA_RULES}
 
