@@ -20,8 +20,12 @@ interface GeminiResponse {
   error?: { code?: number; status?: string; message?: string };
 }
 
-/** Models that recently answered 503/429 are skipped for a while instead of being retried on every call. */
-const COOLDOWN_MS = 5 * 60_000;
+/**
+ * Models that recently failed are skipped for a while instead of being retried on every call:
+ * 60s after a 429 (free-tier per-minute rate limit), 5 min after an overload (503) or timeout.
+ */
+const RATE_LIMIT_COOLDOWN_MS = 60_000;
+const OVERLOAD_COOLDOWN_MS = 5 * 60_000;
 const cooldownUntil = new Map<string, number>();
 export function resetGeminiCooldowns() {
   cooldownUntil.clear();
@@ -55,7 +59,7 @@ export class GeminiLLMProvider implements LLMProvider {
         res = await this.call(req, false, model);
       }
       if (res.status !== 503 && res.status !== 429 && res.status !== 599) break;
-      cooldownUntil.set(model, Date.now() + COOLDOWN_MS);
+      cooldownUntil.set(model, Date.now() + (res.status === 429 ? RATE_LIMIT_COOLDOWN_MS : OVERLOAD_COOLDOWN_MS));
     }
     return this.parse(res);
   }
