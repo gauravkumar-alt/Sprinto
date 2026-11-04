@@ -7,7 +7,7 @@ import { providerStatus } from "./providers";
 import { companyDetail, dashboardMetrics, listCompanies, recentBatches } from "./queries";
 import { qualificationReport } from "./report";
 import * as repo from "./repo";
-import type { Snapshot } from "./showroom";
+import { supabaseHeaders, type Snapshot } from "./showroom";
 import { maskPayload } from "./viewer";
 
 const FULL_EMAIL = /[A-Za-z0-9._%+-]{2,}@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
@@ -45,8 +45,7 @@ export async function publishSnapshot(fetchImpl: typeof fetch = fetch): Promise<
   const res = await fetchImpl(`${cfg.url}/rest/v1/showroom_snapshot?on_conflict=id`, {
     method: "POST",
     headers: {
-      apikey: cfg.key,
-      authorization: `Bearer ${cfg.key}`,
+      ...supabaseHeaders(cfg.key),
       "content-type": "application/json",
       prefer: "resolution=merge-duplicates,return=minimal",
     },

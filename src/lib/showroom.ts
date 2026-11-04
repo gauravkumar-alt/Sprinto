@@ -28,13 +28,18 @@ export function supabaseReadConfig() {
   return url && key ? { url, key } : null;
 }
 
+/** New-style keys (sb_publishable_…, sb_secret_…) go only in `apikey`; legacy JWT keys also as a Bearer token. */
+export function supabaseHeaders(key: string): Record<string, string> {
+  return key.startsWith("eyJ") ? { apikey: key, authorization: `Bearer ${key}` } : { apikey: key };
+}
+
 export async function getSnapshot(fetchImpl: typeof fetch = fetch): Promise<Snapshot> {
   const cfg = supabaseReadConfig();
   if (!cfg) return bundled as Snapshot;
   if (g.__showroomCache && Date.now() - g.__showroomCache.at < CACHE_MS) return g.__showroomCache.snap;
   try {
     const res = await fetchImpl(`${cfg.url}/rest/v1/showroom_snapshot?id=eq.1&select=payload`, {
-      headers: { apikey: cfg.key, authorization: `Bearer ${cfg.key}` },
+      headers: supabaseHeaders(cfg.key),
       cache: "no-store",
       signal: AbortSignal.timeout(10_000),
     });
