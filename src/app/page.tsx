@@ -1,7 +1,8 @@
 "use client";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CountUp, Fill, Reveal, focusSection } from "@/components/motion";
 import { Meter, Pips, ProviderChip, SourceBadge, StatusBadge, ThemeToggle, currentStepLabel, postJson, tone, type StageRow } from "@/components/ui";
 import { parseDomainCsv, parseDomainList } from "@/lib/security/domain";
 
@@ -33,6 +34,19 @@ type Status = {
   readOnly: boolean;
   snapshotAt?: string | null;
 };
+
+type Filter = "all" | "qualified" | "needs_review" | "not_qualified" | "emailed" | "sent";
+const FILTERS: [Filter, string][] = [
+  ["all", "All"],
+  ["qualified", "Qualified"],
+  ["needs_review", "Needs review"],
+  ["not_qualified", "Not qualified"],
+  ["sent", "Emailed"],
+];
+const matches = (c: Company, f: Filter) =>
+  f === "all" ? true : f === "emailed" ? Boolean(c.emailStatus) : f === "sent" ? ["sent", "simulated"].includes(c.emailStatus ?? "") : c.decision === f;
+/** An email that went out under an earlier scoring, for a company that no longer qualifies. */
+const sentEarlier = (c: Company) => ["sent", "simulated"].includes(c.emailStatus ?? "") && c.decision !== "qualified";
 
 const MOCK_DEMO = "vaultlane.example\nledgerly.example\nnorthpeak-consulting.example\norbitboard.example\npromptbait.example";
 
@@ -68,7 +82,12 @@ export default function Dashboard() {
   const [submitting, setSubmitting] = useState(false);
   const [msg, setMsg] = useState<{ kind: "info" | "bad"; text: string } | null>(null);
   const [activeBatch, setActiveBatch] = useState<number | null>(null);
-  const [filter, setFilter] = useState<"all" | "qualified" | "needs_review" | "not_qualified">("all");
+  const [filter, setFilter] = useState<Filter>("all");
+  const resultsRef = useRef<HTMLElement>(null);
+  const pick = (f: Filter) => {
+    setFilter((cur) => (cur === f && f !== "all" ? "all" : f));
+    focusSection(resultsRef.current);
+  };
 
   const load = useCallback(async () => {
     try {
@@ -119,10 +138,16 @@ export default function Dashboard() {
   const batchId = activeBatch ?? data?.batches[0]?.id ?? null;
   const progress = (data?.companies ?? []).filter((c) => c.run && (c.run.batchId === batchId || c.run.status === "running" || c.run.status === "queued"));
   const anyMock = p && [p.llm.state, p.gmail.state].includes("mock");
+  const list = data?.companies ?? [];
+  const total = m?.totalCompanies ?? 0;
+  const sentAll = list.filter((c) => ["sent", "simulated"].includes(c.emailStatus ?? "")).length;
+  const sentOld = list.filter(sentEarlier).length;
+  const share = (n: number | undefined) => (total ? ((n ?? 0) / total) * 100 : 0);
+  const showProgress = running || progress.some((c) => c.run?.status === "running" || c.run?.status === "queued") || (activeBatch !== null && progress.length > 0);
 
   return (
-    <div className="shell">
-      <header className="topbar">
+    <Reveal ready={Boolean(data)} className="shell">
+      <header className="topbar" data-reveal>
         <div className="brand">
           <div className="logo">S</div>
           <div>
@@ -160,16 +185,24 @@ export default function Dashboard() {
         </div>
       )}
 
-      <section className="metrics">
-        <Metric label="Companies" value={m?.totalCompanies} />
-        <Metric label="Qualified" value={m?.qualified} />
-        <Metric label="Not qualified" value={m?.notQualified} />
-        <Metric label="Needs review" value={m?.needsReview} />
-        <Metric label="Emails written" value={m?.emailsGenerated} />
-        <Metric label="Sent to inbox" value={m?.emailsSent} hint={m?.emailsSimulated ? `+${m.emailsSimulated} simulated` : undefined} accent />
+      <section className="metrics" aria-label="Summary — click a card to filter the results">
+        <Metric label="Companies" value={m?.totalCompanies} pct={total ? 100 : 0} on={filter === "all"} onClick={() => pick("all")} />
+        <Metric label="Qualified" value={m?.qualified} pct={share(m?.qualified)} tone="ok" on={filter === "qualified"} onClick={() => pick("qualified")} />
+        <Metric label="Needs review" value={m?.needsReview} pct={share(m?.needsReview)} tone="warn" on={filter === "needs_review"} onClick={() => pick("needs_review")} />
+        <Metric label="Not qualified" value={m?.notQualified} pct={share(m?.notQualified)} tone="bad" on={filter === "not_qualified"} onClick={() => pick("not_qualified")} />
+        <Metric label="Emails written" value={m?.emailsGenerated} pct={share(m?.emailsGenerated)} on={filter === "emailed"} onClick={() => pick("emailed")} />
+        <Metric
+          label="Sent to your inbox"
+          value={sentAll}
+          pct={share(sentAll)}
+          tone="ok"
+          hint={sentOld ? `${sentOld} under earlier scoring` : m?.emailsSimulated ? `incl. ${m.emailsSimulated} simulated` : undefined}
+          on={filter === "sent"}
+          onClick={() => pick("sent")}
+        />
       </section>
 
-      <div className="grid-2">
+      <div className={`run-row${showProgress ? " with-progress" : ""}`} data-reveal>
         {data?.readOnly ? (
           <section className="panel">
             <h2>Shared view</h2>
@@ -231,10 +264,14 @@ export default function Dashboard() {
               </button>
             </div>
             {msg && <div className={`notice ${msg.kind === "bad" ? "n-bad" : "n-info"}`} style={{ marginTop: 10 }}>{msg.text}</div>}
-            <p className="sub" style={{ margin: "12px 0 0" }}>Emails go only to {p?.demoInbox ?? "your inbox"} — never to prospects.</p>
+            <div className="guard">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /><path d="m9 12 2 2 4-4" /></svg>
+              Emails go only to {p?.demoInbox ?? "your inbox"} — never to prospects
+            </div>
           </section>
         )}
 
+        {showProgress && (
         <section className="panel">
           <div className="panel-head" style={{ marginBottom: 10 }}>
             <h2>Progress</h2>
@@ -257,29 +294,23 @@ export default function Dashboard() {
             ))
           )}
         </section>
+        )}
       </div>
 
-      <section className="panel" style={{ marginTop: 16 }}>
+      <section className="panel" style={{ marginTop: 16, scrollMarginTop: 16 }} ref={resultsRef} data-reveal>
         <div className="panel-head">
           <h2>Results</h2>
           <div className="filters">
-            {(
-              [
-                ["all", "All"],
-                ["qualified", "Qualified"],
-                ["needs_review", "Needs review"],
-                ["not_qualified", "Not qualified"],
-              ] as const
-            ).map(([k, label]) => (
+            {FILTERS.map(([k, label]) => (
               <button key={k} className={`filter${filter === k ? " on" : ""}`} onClick={() => setFilter(k)}>
-                {label} {(data?.companies ?? []).filter((c) => k === "all" || c.decision === k).length}
+                {label} {list.filter((c) => matches(c, k)).length}
               </button>
             ))}
           </div>
         </div>
         {data?.companies.length ? (
           <div className="table-wrap">
-            <table>
+            <table className="results-table">
               <thead>
                 <tr>
                   <th style={{ padding: 0 }} />
@@ -294,34 +325,46 @@ export default function Dashboard() {
                 </tr>
               </thead>
               <tbody>
-                {data.companies.filter((c) => filter === "all" || c.decision === filter).map((c) => {
+                {list.filter((c) => matches(c, filter)).map((c) => {
                   const status = c.run?.status === "running" || c.run?.status === "queued" ? c.run.status : c.status;
                   return (
                     <tr key={c.id} className="clickable" onClick={() => router.push(`/companies/${c.id}`)}>
                       <td className={`rail ${tone(status)}`}><span /></td>
-                      <td>
+                      <td className="c-company">
                         <b style={{ whiteSpace: "nowrap" }}>{c.name ?? c.domain}</b>
                         <div className="faint" style={{ fontSize: 12, whiteSpace: "nowrap" }}>
                           {c.domain}
                           {c.dataSource === "mock" && <span style={{ color: "var(--mock)", fontWeight: 600 }}> · mock</span>}
                         </div>
                       </td>
-                      <td><Meter value={c.score} status={c.decision} /></td>
-                      <td>
+                      <td data-label="Score" data-empty={c.score === null || undefined}>
+                        {c.score !== null ? (
+                          <button className="meter-btn" onClick={(e) => { e.stopPropagation(); router.push(`/companies/${c.id}#qualification`); }} title="Open the score breakdown" aria-label={`Score ${c.score} of 100 — open breakdown`}>
+                            <Meter value={c.score} status={c.decision} />
+                          </button>
+                        ) : (
+                          <Meter value={c.score} status={c.decision} />
+                        )}
+                      </td>
+                      <td data-label="Breakdown" data-empty={!c.breakdown || undefined}>
                         {c.breakdown ? (
-                          <span className="breakdown" title={`Business model ${c.breakdown.business}/30 · Growth ${c.breakdown.growth}/25 · Compliance ${c.breakdown.compliance}/35 · Enterprise ${c.breakdown.enterprise}/10`}>
+                          <button
+                            className="breakdown"
+                            onClick={(e) => { e.stopPropagation(); router.push(`/companies/${c.id}#qualification`); }}
+                            title={`Business model ${c.breakdown.business}/30 · Growth ${c.breakdown.growth}/25 · Compliance ${c.breakdown.compliance}/35 · Enterprise ${c.breakdown.enterprise}/10 — click for evidence`}
+                          >
                             <span>{c.breakdown.business}</span>
                             <span>{c.breakdown.growth}</span>
                             <span className={c.breakdown.compliance ? "hot" : ""}>{c.breakdown.compliance}</span>
                             <span>{c.breakdown.enterprise}</span>
-                          </span>
+                          </button>
                         ) : (
                           <span className="faint" title="Assessed with the previous rubric — re-run to see the breakdown">—</span>
                         )}
                       </td>
-                      <td><StatusBadge status={status} /></td>
-                      <td title={c.reason ?? undefined}>{shortReason(c)}</td>
-                      <td>
+                      <td className="c-status"><StatusBadge status={status} /></td>
+                      <td data-label="Why" className="c-why" data-empty={shortReason(c) === "—" || undefined} title={c.reason ?? undefined}>{shortReason(c)}</td>
+                      <td data-label="Decision-maker" className="c-wide" data-empty={!c.contactName || undefined}>
                         {c.contactName ? (
                           <>
                             <div>{c.contactName}</div>
@@ -331,7 +374,7 @@ export default function Dashboard() {
                           <span className="faint">—</span>
                         )}
                       </td>
-                      <td style={{ maxWidth: 280 }}>
+                      <td data-label="Pain points" className="c-pain c-wide" data-empty={!c.painPoint1 || undefined} style={{ maxWidth: 280 }}>
                         {c.painPoint1 ? (
                           <>
                             <div className="clamp1" title={c.painPoint1}>1. {c.painPoint1}</div>
@@ -341,28 +384,36 @@ export default function Dashboard() {
                           <span className="faint">—</span>
                         )}
                       </td>
-                      <td><StatusBadge status={c.emailStatus} /></td>
+                      <td data-label="Email" data-empty={!c.emailStatus || undefined}>
+                        {sentEarlier(c) ? <span className="badge b-mute" title="Sent under an earlier scoring; this company no longer qualifies">Sent earlier</span> : <StatusBadge status={c.emailStatus} />}
+                      </td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
-            {m && m.llmCalls > 0 && <p className="faint" style={{ fontSize: 12, margin: "10px 18px 14px" }}>{m.llmCalls} AI calls{m.llmCostUsd > 0 ? ` · ~$${m.llmCostUsd.toFixed(2)}` : ""} · Breakdown = business model · growth · compliance · enterprise</p>}
+            <div className="legend">
+              <span><b>Breakdown</b> business /30 · growth /25 · compliance /35 · enterprise /10</span>
+              <span>Click a score for its evidence</span>
+              {m && m.llmCalls > 0 && <span>{m.llmCalls} AI calls{m.llmCostUsd > 0 ? ` · ~$${m.llmCostUsd.toFixed(2)}` : ""}</span>}
+            </div>
           </div>
         ) : (
           <div className="empty">No companies yet.</div>
         )}
       </section>
-    </div>
+    </Reveal>
   );
 }
 
-function Metric({ label, value, hint, accent }: { label: string; value: number | undefined; hint?: string; accent?: boolean }) {
+function Metric({ label, value, hint, pct, tone, on, onClick }: { label: string; value: number | undefined; hint?: string; pct: number; tone?: "ok" | "warn" | "bad"; on?: boolean; onClick: () => void }) {
   return (
-    <div className={`metric${accent ? " accent" : ""}`}>
+    <button type="button" className={`metric${tone ? ` t-${tone}` : ""}${on ? " on" : ""}`} onClick={onClick} aria-pressed={on} data-reveal>
+      <span className="go" aria-hidden>↓</span>
       <div className="label">{label}</div>
-      <div className="value">{value ?? "–"}</div>
-      {hint && <div className="hint">{hint}</div>}
-    </div>
+      <div className="value"><CountUp value={value} /></div>
+      {hint && <div className="sent-note">{hint}</div>}
+      <div className="mbar"><Fill pct={pct} /></div>
+    </button>
   );
 }

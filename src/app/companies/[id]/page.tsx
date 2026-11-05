@@ -1,6 +1,8 @@
 "use client";
 import Link from "next/link";
 import { use, useCallback, useEffect, useState } from "react";
+import gsap from "gsap";
+import { Fill, Reveal, reducedMotion } from "@/components/motion";
 import { Refs, SourceBadge, StageList, StatusBadge, ThemeToggle, postJson } from "@/components/ui";
 import type { CompanyProfile, QualificationResult } from "@/lib/schemas";
 
@@ -43,6 +45,12 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
   const [d, setD] = useState<Detail | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("overview");
+  // Tab content slides in on every switch.
+  useEffect(() => {
+    if (reducedMotion()) return;
+    const els = document.querySelectorAll(".tab-pane > *");
+    if (els.length) gsap.fromTo(els, { y: 10, autoAlpha: 0 }, { y: 0, autoAlpha: 1, duration: 0.45, ease: "power3.out", stagger: 0.04, clearProps: "transform,opacity,visibility" });
+  }, [tab]);
   const [highlight, setHighlight] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | "observed" | "inference" | "unknown">("all");
   const [actionMsg, setActionMsg] = useState<{ kind: "info" | "bad"; text: string } | null>(null);
@@ -113,8 +121,8 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
   const count = (t: string) => evidence.filter((e) => e.evidence_type === t).length;
 
   return (
-    <div className="shell">
-      <header className="topbar">
+    <Reveal ready={Boolean(d)} className="shell">
+      <header className="topbar" data-reveal>
         <div>
           <Link href="/" className="sub">← All companies</Link>
           <div className="row" style={{ marginTop: 6 }}>
@@ -150,7 +158,7 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
       {actionMsg && <div className={`notice ${actionMsg.kind === "bad" ? "n-bad" : "n-info"}`} style={{ marginBottom: 12 }}>{actionMsg.text}</div>}
 
       {/* Result banner: the whole story in one line */}
-      <div className="hero">
+      <div className="hero" data-reveal>
         <div>
           <div className="k">ICP score</div>
           <div className="v">{q ? `${q.fit_score}/100` : "—"}</div>
@@ -164,16 +172,16 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
         <div>
           <div className="k">Pain points</div>
           <div className="v">{d.painPoints.length || "—"}</div>
-          <div className="s">{d.painPoints.length ? `${d.painPoints.filter((p: any) => p.type === "direct").length} evidenced · ${d.painPoints.filter((p: any) => p.type !== "direct").length} inferred` : "—"}</div>
+          <div className="s">{d.painPoints.length ? (d.painPoints.some((p: any) => p.type === "direct") ? `${d.painPoints.filter((p: any) => p.type === "direct").length} backed by quotes` : "From role and company profile") : "Qualified companies only"}</div>
         </div>
         <div>
           <div className="k">Email</div>
-          <div className="v">{send ? <StatusBadge status={send.status} /> : email ? <StatusBadge status={email.status} /> : "—"}</div>
-          <div className="s ellipsis">{send?.completed_at ? `${fmt(send.completed_at)}${earlier ? " · earlier run" : ""}` : email ? `Validation: ${email.validation_status}` : "Not written"}</div>
+          <div className="v">{send ? (earlier ? <span className="badge b-mute">Sent earlier</span> : <StatusBadge status={send.status} />) : email ? <StatusBadge status={email.status} /> : "—"}</div>
+          <div className="s ellipsis">{send?.completed_at ? (earlier ? "Under earlier scoring" : fmt(send.completed_at)) : email ? `Validation: ${email.validation_status}` : "Not written"}</div>
         </div>
       </div>
 
-      <nav className="tabs" role="tablist">
+      <nav className="tabs" role="tablist" data-reveal>
         {(
           [
             ["overview", "Overview", null],
@@ -190,6 +198,7 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
         ))}
       </nav>
 
+      <div className="tab-pane" key={tab}>
       {tab === "overview" && (
         <div className="stack">
           <div className="why-grid">
@@ -247,7 +256,7 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
                         <div className="rubric-head">
                           <b>{cat.label}</b>
                           <span className="spacer" />
-                          <div className="track"><div className="fill" style={{ width: `${(cat.score / cat.max) * 100}%` }} /></div>
+                          <div className="track"><Fill pct={(cat.score / cat.max) * 100} /></div>
                           <span className="score">{cat.score}/{cat.max}</span>
                         </div>
                         {cat.criteria.map((cr) => (
@@ -490,15 +499,23 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
           )}
         </div>
       )}
-    </div>
+      </div>
+    </Reveal>
   );
 }
 
 function Why({ q, a, full }: { q: string; a: string; full?: string }) {
+  const [open, setOpen] = useState(false);
+  const long = (full && full !== a) || a.length > 140;
   return (
-    <div className="why" title={full && full !== a ? full : undefined}>
+    <div className="why">
       <div className="q">{q}</div>
-      <div className="clamp3">{a}</div>
+      <div className={open ? undefined : "clamp2"}>{open && full ? full : a}</div>
+      {long && (
+        <button className="more" onClick={() => setOpen(!open)}>
+          {open ? "Less" : "More"}
+        </button>
+      )}
     </div>
   );
 }

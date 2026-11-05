@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { PIPELINE_STAGES, type PipelineStage } from "@/lib/config";
+import { Fill } from "./motion";
 
 export type StageRow = { stage: string; status: string; summary: string | null; error?: string | null };
 
@@ -112,7 +113,7 @@ export function Meter({ value, max = 100, status }: { value: number | null; max?
     <div className={`meter ${tone(status)}`} title={`${value}/${max}`}>
       <span className="score">{value}</span>
       <div className="track">
-        <div className="fill" style={{ width: `${Math.max(2, (value / max) * 100)}%` }} />
+        <Fill pct={Math.max(2, (value / max) * 100)} />
       </div>
     </div>
   );

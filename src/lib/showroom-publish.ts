@@ -11,7 +11,8 @@ import { supabaseHeaders, type Snapshot } from "./showroom";
 import { hasFullEmail, maskPayload, publicCompanyDetail } from "./viewer";
 
 export function buildSnapshot(): Snapshot {
-  const companies = listCompanies();
+  // Real research only: fictional .example demo companies stay on this computer.
+  const companies = listCompanies().filter((c) => c.dataSource !== "mock");
   const details: Record<string, Record<string, unknown>> = {};
   const reports: Record<string, Record<string, unknown>> = {};
   for (const c of companies) {
@@ -21,7 +22,23 @@ export function buildSnapshot(): Snapshot {
   }
   const snap = maskPayload({
     generatedAt: new Date().toISOString(),
-    status: { providers: providerStatus(), metrics: { ...dashboardMetrics(), running: 0 }, batches: recentBatches(), companies, readOnly: true },
+    status: {
+      providers: providerStatus(),
+      metrics: {
+        ...dashboardMetrics(),
+        totalCompanies: companies.length,
+        qualified: companies.filter((c) => c.decision === "qualified").length,
+        notQualified: companies.filter((c) => c.status === "not_qualified").length,
+        needsReview: companies.filter((c) => ["needs_review", "contact_not_found", "email_needs_review"].includes(c.status)).length,
+        emailsGenerated: companies.filter((c) => c.emailStatus).length,
+        emailsSent: companies.filter((c) => c.emailStatus === "sent").length,
+        emailsSimulated: 0,
+        running: 0,
+      },
+      batches: recentBatches(),
+      companies,
+      readOnly: true,
+    },
     companies: details,
     qualification: reports,
   }) as Snapshot;
