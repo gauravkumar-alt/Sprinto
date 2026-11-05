@@ -175,11 +175,15 @@ DEMO_INBOX_EMAIL=you@gmail.com
 ## Testing
 
 ```bash
-npm test            # vitest: 79 tests
+npm test            # vitest: 114 tests, no network
 npm run typecheck
 npm run lint
 npm run build
+npm run eval        # accuracy eval with the real LLM (see below)
 ```
+
+### Accuracy eval (`npm run eval`)
+[`eval/qualification-cases.ts`](eval/qualification-cases.ts) holds 14 labelled fictional companies (`.example`, nothing real is contacted), each with the decision a careful analyst would reach. They include the traps that break keyword matching: "not yet SOC 2 certified", "not just compliant — certified", ISO held but SOC 2 planned, a compliance vendor that *helps others* get SOC 2, a B2C app, an agency, hardware, a borderline company and a prompt-injection page. The eval runs the real research and qualification prompts plus the deterministic rubric and reports per-case results (`data/eval-results.json`). Add a case whenever a live run gets something wrong.
 
 Coverage maps to the case's checklist: SaaS recognition, non-SaaS rejection, Series A–C, unknown stage, audit-only and enterprise-only qualification (OR logic), weak evidence downgrades, needs-review, deterministic scoring, research-loop maximum, qualification gate (no contact lookup for unqualified companies), contact ranking by stage, missing/invalid contacts, Hunter rate-limit/quota and caching, structured extraction, malformed-JSON retries, exactly-two evidence-backed pain points, email personalisation and validation, bounded regeneration (failed emails never sent), prospect name/company in body, recipient restricted to own inbox, prospect never in To/Cc/Bcc/body, Gmail auth failure, wrong Google account, duplicate prevention, failed and unknown-outcome sends, mock vs real send, SSRF, robots.txt, domain/CSV parsing and prompt-injection hygiene.
 
@@ -229,6 +233,11 @@ What gets published: the dashboard, research, evidence, qualification reports, c
 - The crawler reads each host's robots.txt before any page, stays on the company's domain on every redirect hop, and never crawls shared suffixes such as `github.io` or `co.uk`.
 - Untrusted text (page titles, company names, provider job titles) is sanitised before reaching a prompt; sentences recovered from hidden page data or third-party search results are stored as inference, never as fact.
 - Numbers in emails must match a value **and unit** in the cited evidence; no email address may appear in an email.
+- Criterion patterns are checked against the **verbatim page quote only**, never the model's own claim, so the model can't talk a company into points. Negated ("not yet certified"), planned ("preparing for our attestation") and vendor wording ("we help startups get SOC 2") never count as already certified; blog/docs articles never count as the company's own audit preparation.
+- Funding found through search (`RESEARCH_PROVIDER=gemini` = Google Search via Gemini grounding) is used only to find article URLs; the article itself is fetched and quoted verbatim, labelled as third-party, and it can only satisfy the funding criterion.
+- Shared-link and public viewers see an allowlist: the selected decision-maker's name and title only (no other people, no addresses, no Gmail ids), with every email address masked (including `%40` forms). A request is "local" only if its Host is loopback **and** no proxy header (`X-Forwarded-For`, `CF-Connecting-IP`, `Forwarded`…) names a remote client.
+- Only one server process may run the agent per database (`data/outreach.db.lock`), so two copies can't double-send. "Approve" works only on *needs review* companies, never on a disqualification.
+- robots.txt: a server error or timeout means "disallowed" (RFC 9309); redirects are re-checked. The headless-browser fallback never touches the network itself — every request goes through the SSRF-safe fetcher (pinned DNS, ports 80/443, GET only, WebSockets closed).
 - Mock data is always SIMULATED, even when Gmail is connected. One email per company per campaign; ambiguous Gmail outcomes (timeouts, 5xx) require confirmation before a resend.
 
 ## Limitations (honest notes)

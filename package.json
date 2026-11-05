@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "demo": "tsx scripts/demo.ts",
-    "snapshot": "tsx --env-file=.env.local scripts/export-showroom.ts"
+    "snapshot": "tsx --env-file=.env.local scripts/export-showroom.ts",
+    "eval": "tsx --env-file=.env.local scripts/eval-qualification.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.4.0",

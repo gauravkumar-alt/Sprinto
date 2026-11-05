@@ -9,7 +9,7 @@
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { isShowroom } from "@/lib/showroom-flag";
-import { isLoopbackHost as isLoopback } from "@/lib/viewer";
+import { isLoopbackHost as isLoopback, isRemoteRequest } from "@/lib/viewer";
 
 const hostname = (hostHeader: string) => hostHeader.toLowerCase().replace(/:\d+$/, "");
 
@@ -33,7 +33,8 @@ export function middleware(req: NextRequest) {
   const extra = (process.env.ALLOWED_HOSTS ?? "").split(",").map((h) => h.trim().toLowerCase()).filter(Boolean);
   const host = req.headers.get("host");
   const path = req.nextUrl.pathname;
-  const readOnly = !isLoopback(host);
+  // Read-only unless the request is truly local (a tunnel rewriting Host to localhost still counts as remote).
+  const readOnly = isRemoteRequest(req.headers);
 
   if (!hostAllowed(host, extra)) return deny(403, "Forbidden host");
 

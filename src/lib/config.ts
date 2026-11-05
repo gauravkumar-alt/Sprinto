@@ -44,7 +44,7 @@ export function getConfig() {
     },
 
     research: {
-      provider: str("RESEARCH_PROVIDER", ""), // "tavily" or empty (website only)
+      provider: str("RESEARCH_PROVIDER", ""), // "gemini", "tavily" or empty (website only)
       apiKey: str("RESEARCH_API_KEY"),
       /** One homepage request, then at most this many targeted page fetches per company. */
       maxAdditionalPages: num("RESEARCH_MAX_ADDITIONAL_PAGES", 4),

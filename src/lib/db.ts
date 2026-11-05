@@ -242,16 +242,22 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 `;
 
-function resolvePath(url: string): string {
+export function resolvePath(url: string): string {
   if (url === ":memory:" || url === "file::memory:") return ":memory:";
   const p = url.startsWith("file:") ? url.slice(5) : url;
   return path.resolve(process.cwd(), p);
 }
 
-const g = globalThis as unknown as { __outreachDb?: DB };
+const g = globalThis as unknown as { __outreachDb?: DB; __outreachDbFile?: string };
+
+/** Path of the database this process is actually using (":memory:" for tests). */
+export const activeDbFile = () => g.__outreachDbFile ?? resolvePath(getConfig().databaseUrl);
 
 export function getDb(): DB {
-  if (!g.__outreachDb) g.__outreachDb = openDb(getConfig().databaseUrl);
+  if (!g.__outreachDb) {
+    g.__outreachDb = openDb(getConfig().databaseUrl);
+    g.__outreachDbFile = resolvePath(getConfig().databaseUrl);
+  }
   return g.__outreachDb;
 }
 
@@ -271,6 +277,7 @@ export function openDb(url: string): DB {
 /** Test helper: swap in a fresh database (e.g. in-memory). */
 export function setDbForTests(db: DB) {
   g.__outreachDb = db;
+  g.__outreachDbFile = ":memory:";
 }
 
 export const nowIso = () => new Date().toISOString();

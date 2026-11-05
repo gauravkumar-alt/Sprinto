@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { agentBusyMessage, agentLockHolder } from "@/lib/agent-lock";
 import { z } from "zod/v4";
 import { getConfig } from "@/lib/config";
 import { getDb } from "@/lib/db";
@@ -12,6 +13,8 @@ const Body = z.object({ domains: z.string().max(20_000).optional(), csv: z.strin
 
 export async function POST(req: Request) {
   recoverOnce();
+  const lockHolder = agentLockHolder();
+  if (lockHolder !== null) return NextResponse.json({ error: agentBusyMessage(lockHolder) }, { status: 409 });
   const parsedBody = Body.safeParse(await req.json().catch(() => null));
   if (!parsedBody.success || (!parsedBody.data.domains && !parsedBody.data.csv)) {
     return NextResponse.json({ error: "Provide `domains` (text) or `csv`." }, { status: 400 });

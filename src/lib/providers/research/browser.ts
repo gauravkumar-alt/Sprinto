@@ -2,15 +2,14 @@
  * Headless-browser fallback (Playwright) for pages whose content only appears after JavaScript runs.
  * Used only when plain HTML yields too little text, and only for URLs robots.txt already allowed.
  *
- * Safety: the browser makes its own network requests, so every request is checked here —
- * http(s) only, no private/loopback/link-local destinations (DNS resolved and checked per host),
- * top-level navigation must stay on the company's domain, and images/media/fonts are skipped.
- * No logins, no form submission, no CAPTCHA handling.
+ * Safety: Chromium never touches the network itself. Every request is intercepted and fetched by the
+ * agent's own SSRF-safe client (DNS resolved once and pinned, private/loopback/link-local addresses refused,
+ * redirects re-checked), then handed back to the page. Only GET requests for documents, scripts, styles and
+ * data on ports 80/443; WebSockets are closed; images/media/fonts skipped; top-level navigation must stay on
+ * the company's domain. No logins, no form submission, no CAPTCHA handling.
  */
-import dns from "node:dns/promises";
-import net from "node:net";
 import type { Browser } from "playwright-core";
-import { isPrivateAddress } from "@/lib/security/ssrf";
+import { safeFetch } from "@/lib/security/ssrf";
 import { sameSite } from "./prioritize";
 
 const g = globalThis as unknown as { __outreachBrowser?: Promise<Browser | null> };
@@ -29,21 +28,7 @@ async function getBrowser(): Promise<Browser | null> {
   return g.__outreachBrowser;
 }
 
-const hostVerdict = new Map<string, Promise<boolean>>();
-function hostIsPublic(host: string): Promise<boolean> {
-  const h = host.replace(/^\[|\]$/g, "");
-  if (net.isIP(h)) return Promise.resolve(!isPrivateAddress(h));
-  if (/(^|\.)(localhost|local|internal|lan|home|corp)$/i.test(h)) return Promise.resolve(false);
-  let v = hostVerdict.get(h);
-  if (!v) {
-    v = dns
-      .lookup(h, { all: true })
-      .then((addrs) => addrs.length > 0 && addrs.every((a) => !isPrivateAddress(a.address)))
-      .catch(() => false);
-    hostVerdict.set(h, v);
-  }
-  return v;
-}
+const ALLOWED_TYPES = new Set(["document", "script", "stylesheet", "xhr", "fetch"]);
 
 export interface RenderedPage {
   html: string;
@@ -56,6 +41,7 @@ export async function renderWithBrowser(url: string, domain: string, opts: { tim
   const context = await browser.newContext({ userAgent: opts.userAgent, acceptDownloads: false, serviceWorkers: "block", javaScriptEnabled: true });
   try {
     const page = await context.newPage();
+    await context.routeWebSocket(/.*/, (ws) => ws.close());
     await page.route("**/*", async (route) => {
       const req = route.request();
       let u: URL;
@@ -66,10 +52,17 @@ export async function renderWithBrowser(url: string, domain: string, opts: { tim
       }
       if (u.protocol === "data:" || u.protocol === "blob:") return route.continue();
       if (u.protocol !== "http:" && u.protocol !== "https:") return route.abort();
-      if (["image", "media", "font"].includes(req.resourceType())) return route.abort();
-      if (req.isNavigationRequest() && req.frame() === page.mainFrame() && !sameSite(u, domain)) return route.abort();
-      if (!(await hostIsPublic(u.hostname))) return route.abort();
-      return route.continue();
+      if (u.port && u.port !== "80" && u.port !== "443") return route.abort();
+      if (req.method() !== "GET" || !ALLOWED_TYPES.has(req.resourceType())) return route.abort();
+      const topLevel = req.isNavigationRequest() && req.frame() === page.mainFrame();
+      if (topLevel && !sameSite(u, domain)) return route.abort();
+      try {
+        const r = await safeFetch(u.toString(), { timeoutMs: opts.timeoutMs, maxRedirects: 3, maxBytes: 3_000_000, userAgent: opts.userAgent, accept: req.headers()["accept"] ?? "*/*" });
+        if (topLevel && !sameSite(new URL(r.finalUrl), domain)) return route.abort();
+        return route.fulfill({ status: r.status, contentType: r.contentType || undefined, body: r.body });
+      } catch {
+        return route.abort();
+      }
     });
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: opts.timeoutMs });
     await page.waitForLoadState("networkidle", { timeout: Math.min(6000, opts.timeoutMs) }).catch(() => {});

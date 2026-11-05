@@ -14,27 +14,55 @@ import type { AuditLevel, CategoryResult, CriterionResult, CriterionStatus, Ente
 export interface EvidenceLite {
   ref: string;
   type: "observed" | "inference" | "unknown";
-  text: string; // claim + quote
+  text: string; // claim + quote (display)
+  /** The verbatim page quote; criterion patterns are tested on this only, never on the model's claim. */
+  quote?: string;
   url?: string | null;
   pageTag?: string | null; // page type the evidence came from (homepage, hiring, security/compliance, …)
 }
 
 // "SOC 2", "SOC2", "SOC-2", "SOC II", "SOC two"; ISO 27001/27701; HIPAA; PCI DSS; FedRAMP; HITRUST.
-const CERT_RE = /soc\s*-?\s*(2|ii|two)\b|iso\s*-?\s*2700[1-9]|hipaa|pci[\s-]*dss|fedramp|hitrust/i;
-const PREP_RE = /prepar|pursu|plan(s|ned|ning)?\b|working (to|towards?)|in progress|pending|underway|road\s*map|expect|upcoming|coming soon|in the process|on track|kick(ed)? off|begin|start(ed|ing)? (our|the|a)/i;
-const HELD_RE = /certified|compliant|attest|report (is )?available|audited|achieved|holds?\b|maintains?|passed|completed|successfully|is soc|are soc|type (ii|2) report/i;
+const CERT_RE = /\bsoc\s*-?\s*(2|ii|two)\b|\biso\s*-?\s*2700[1-9]|\bhipaa\b|\bpci[\s-]*dss\b|\bfedramp\b|\bhitrust\b/i;
+/** Work toward a certification that is not finished. Word-bounded so "Enterprise plan" or "Start a free trial" don't match. */
+const PREP_RE =
+  /\bprepar(e|es|ing|ation)\b|\bpursu(e|es|ing)\b|\bplan(s|ned|ning)? (to|for|on)\b|\bplanned\b|\bworking (to|towards?|on)\b|\bin progress\b|\bpending\b|\bunderway\b|\broad\s*map\b|\bexpect(ed|s|ing)?\b|\bupcoming\b|\bcoming soon\b|\bin the process\b|\bon track\b|\bkick(s|ed|ing)? off\b|\bin flight\b|\bstart(ed|ing)? (our|the|an?) (soc|iso|audit|certification|compliance)|\b(soc|iso|hipaa|audit)[^.]{0,25}\b(this|next) (quarter|year|month)\b|\btowards?\b/i;
+const HELD_RE = /\bcertified\b|\bcompliant\b|\battested\b|\battestation report\b|\breport (is )?available\b|\baudited\b|\bachieved\b|\bholds?\b|\bmaintains?\b|\bpassed\b|\bcompleted\b|\b(is|are) soc\b|\btype (ii|2) report\b/i;
+/** "not yet SOC 2 certified", "no SOC 2 report", "isn't HIPAA compliant" — a certification that is explicitly NOT held. */
+const NOT_HELD_RE = /\b(not|never)\b(?!\s+(just|only|merely))[^.]{0,30}(certified|compliant|soc|iso|audited|attest)|\bno\s+(soc|iso|hipaa|pci|certification|audit)|n['’]t\s+(yet\s+)?(been\s+)?(certified|compliant|audited|soc|iso|have)|\bwithout\b[^.]{0,20}(soc|iso|certification)|\b(yet to|have to|need to|needs to|must)\s+(get|become|achieve|obtain)\b|\bnot yet\b/i;
+/** The company sells compliance help to others ("we help startups get SOC 2") — says nothing about its own status. */
+const HELPS_OTHERS_RE = /\bhelps?\b[^.]{0,40}\b(get|achieve|become|pass|prepare|obtain|automate)|\b(your|customers['’]?|clients['’]?)\s+(soc|iso|hipaa|compliance|audit)|for (your|their) (soc|iso|audit)/i;
+/** Page types whose text describes the company itself rather than general advice. */
+const ARTICLE_PAGES = new Set(["blog", "docs"]);
+const JOB_TEXT = /\bhiring\b|\bopen (roles?|positions?)\b|\bjobs?\b|\bvacanc|\bjoin (our|the) team\b|\bwe['’]re looking for\b|\bposition\b|\brole\b/i;
 
-/** Text each criterion's supporting quote must contain to count as direct evidence. */
+/** Text each criterion's supporting QUOTE (never the model's own claim) must contain to count as direct evidence. */
 const PATTERNS: Partial<Record<CriterionId, RegExp[]>> = {
   // SaaS delivery: the word itself, a hosted product, or self-serve subscription plans ("free plan", "no credit card", "/month").
   saas: [/saas|software|subscription|cloud|platform|\bapp\b|per (seat|user|month)|\bapi\b|\b(free|pro|team|business|enterprise|starter|growth) (plan|tier)|free trial|no credit card|sign up (for )?free|\/\s?mo(nth)?\b|hosted/i],
   funding_series_ac: [/series\s*-?\s*[abc]\b/i],
   enterprise_pricing: [/enterprise/i],
   preparing_certification: [CERT_RE, PREP_RE],
-  compliance_hiring: [/security|compliance|\bgrc\b|risk|infosec|privacy|trust/i],
-  enterprise_security_reviews: [/questionnaire|security review|procurement|vendor (security|risk|assessment)|due diligence|requir|\bdpa\b|security (package|portal)|trust (center|centre|portal)/i],
-  targets_enterprise: [/enterprise|large (organi[sz]ations|companies|businesses|teams)|fortune\s*\d+|global brands/i],
+  compliance_hiring: [/\bsecurity\b|\bcompliance\b|\bgrc\b|\binfosec\b|\bprivacy\b|\bgovernance\b|\brisk (and|&) compliance\b|\baudit/i],
+  enterprise_security_reviews: [/questionnaire|security review|procurement|vendor (security|risk|assessment)|due diligence|security requirements|(customers?|buyers?|procurement|enterprises?) (require|requires|required|ask for|request)|\bdpa\b|security (package|portal)|trust (center|centre|portal)/i],
+  targets_enterprise: [/(?<!small (and|&) medium[- ]sized |small (and|&) medium |medium[- ]sized |small )enterprises?\b|large (organi[sz]ations|companies|businesses|teams)|fortune\s*\d+|global brands/i],
 };
+
+/** Extra checks a quote must pass for some criteria (context, not just keywords). */
+function quoteFits(id: CriterionId, quote: string, pageTag: string | null | undefined): boolean {
+  if (id === "preparing_certification") return !HELPS_OTHERS_RE.test(quote) && !ARTICLE_PAGES.has(pageTag ?? "");
+  if (id === "compliance_hiring") return pageTag === "hiring" || JOB_TEXT.test(quote);
+  if (id === "targets_enterprise") return !/\bsmes?\b|small (and|&) medium/i.test(quote) || /large|fortune|global/i.test(quote);
+  return true;
+}
+
+/** A quote shows a certification is already held (not planned, negated, or about customers). */
+export function showsCertificationHeld(quote: string, pageTag?: string | null): boolean {
+  if (ARTICLE_PAGES.has(pageTag ?? "")) return false;
+  if (!CERT_RE.test(quote) || !HELD_RE.test(quote) || NOT_HELD_RE.test(quote) || HELPS_OTHERS_RE.test(quote)) return false;
+  // "preparing for our SOC 2 attestation": planned, unless it also states something already completed.
+  if (PREP_RE.test(quote) && !/\b(achieved|completed|passed|holds?|is (soc|iso)[^.]{0,20}certified|are (soc|iso)[^.]{0,20}certified|(is|are) certified)\b/i.test(quote)) return false;
+  return true;
+}
 
 /** The five critical research questions and the page types that answer them (targeted, never random). */
 export const CRITICAL_QUESTIONS = [
@@ -66,7 +94,20 @@ export function decideQualification(params: {
   for (const def of CRITERIA) {
     const f = findingFor(def.id);
     const valid = observed(f?.evidence_ids ?? []);
-    const matching = valid.filter((ref) => (PATTERNS[def.id] ?? []).every((re) => re.test(byRef.get(ref)!.text)));
+    const quoteOf = (ref: string) => byRef.get(ref)!.quote ?? byRef.get(ref)!.text;
+    let matching = valid.filter((ref) => (PATTERNS[def.id] ?? []).every((re) => re.test(quoteOf(ref))) && quoteFits(def.id, quoteOf(ref), byRef.get(ref)!.pageTag));
+    // Funding is rarely on the company's own site: a verbatim quote from a fetched news article / press release counts,
+    // labelled as third-party. Nothing else can be scored from third-party pages.
+    if (def.id === "funding_series_ac" && matching.length === 0) {
+      const thirdParty = (f?.evidence_ids ?? []).filter((id) => {
+        const e = byRef.get(id);
+        return e?.type === "inference" && /^Third-party source reports:/.test(e.text) && (PATTERNS.funding_series_ac ?? []).every((re) => re.test(e.quote ?? e.text));
+      });
+      if (thirdParty.length && f?.found) {
+        matching = thirdParty;
+        adjustments.push("Funding stage taken from a third-party article (quoted verbatim)");
+      }
+    }
     let found = Boolean(f?.found) && matching.length > 0;
 
     if (def.id === "open_roles" && found) {
@@ -109,8 +150,8 @@ export function decideQualification(params: {
     .map((c) => ({
       name: c.name,
       evidence_refs: observed(c.evidence_ids).filter((ref) => {
-        const t = byRef.get(ref)!.text;
-        return CERT_RE.test(t) && HELD_RE.test(t);
+        const e = byRef.get(ref)!;
+        return showsCertificationHeld(e.quote ?? e.text, e.pageTag);
       }),
     }))
     .filter((c) => c.evidence_refs.length > 0);

@@ -66,3 +66,4 @@ export function parseRobots(txt: string, userAgent: string): RobotsRules {
 }
 
 export const ALLOW_ALL: RobotsRules = { allowed: () => true, crawlDelayMs: null, sitemaps: [] };
+export const DISALLOW_ALL: RobotsRules = { allowed: () => false, crawlDelayMs: null, sitemaps: [] };

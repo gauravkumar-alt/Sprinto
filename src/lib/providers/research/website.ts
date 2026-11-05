@@ -9,7 +9,7 @@ import { KeyedRateLimiter, errorMessage, sha256 } from "@/lib/util";
 import { renderWithBrowser } from "./browser";
 import { extractHtml, parseSitemap } from "./html";
 import { COMMON_PATHS, TRUST_SUBDOMAINS, type CandidateUrl, sameSite, scoreUrl } from "./prioritize";
-import { ALLOW_ALL, parseRobots, type RobotsRules } from "./robots";
+import { ALLOW_ALL, DISALLOW_ALL, parseRobots, type RobotsRules } from "./robots";
 import type { CrawlLog, CrawlSession, FetchedPage, ResearchProvider } from "./types";
 
 const hostLimiter = new KeyedRateLimiter(600);
@@ -53,12 +53,14 @@ class WebsiteCrawlSession implements CrawlSession {
   private async robotsFor(origin: string): Promise<RobotsRules> {
     const cached = this.robotsByOrigin.get(origin);
     if (cached) return cached;
-    let rules = ALLOW_ALL;
+    // RFC 9309: a missing robots.txt (4xx) allows everything; a server error or no answer means "assume disallowed".
+    let rules = DISALLOW_ALL;
     try {
       const r = await safeFetch(`${origin}/robots.txt`, this.fetchOpts("text/plain"));
-      if (r.status === 200 && !/html/i.test(r.contentType)) rules = parseRobots(r.body, this.cfg.userAgent);
+      if (r.status === 200) rules = /html/i.test(r.contentType) ? ALLOW_ALL : parseRobots(r.body, this.cfg.userAgent);
+      else if (r.status >= 400 && r.status < 500) rules = ALLOW_ALL;
     } catch {
-      /* unreachable or no robots.txt → default allow (standard crawler behaviour) */
+      /* unreachable or timed out → stay disallowed */
     }
     this.robotsByOrigin.set(origin, rules);
     return rules;
@@ -211,7 +213,8 @@ class WebsiteCrawlSession implements CrawlSession {
       }
       this.visited.add(r.finalUrl);
       const finalUrl = new URL(r.finalUrl);
-      if (finalUrl.origin !== u.origin && !(await this.robotsFor(finalUrl.origin)).allowed(finalUrl.pathname)) {
+      // Re-check robots.txt for wherever a redirect landed (same origin included).
+      if (finalUrl.href !== u.href && !(await this.robotsFor(finalUrl.origin)).allowed(finalUrl.pathname)) {
         log.push({ url, outcome: "skipped_robots", detail: `redirect target ${r.finalUrl} is disallowed by robots.txt` });
         return null;
       }

@@ -7,6 +7,7 @@
  *  - retry_send:     retry stage 7 for the latest email (confirmUnknownOutcome required if the last attempt's outcome is unknown)
  */
 import { NextResponse } from "next/server";
+import { agentBusyMessage, agentLockHolder } from "@/lib/agent-lock";
 import { z } from "zod/v4";
 import { getConfig } from "@/lib/config";
 import { getDb } from "@/lib/db";
@@ -33,6 +34,8 @@ const Action = z.discriminatedUnion("action", [
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   recoverOnce();
+  const lockHolder = agentLockHolder();
+  if (lockHolder !== null) return NextResponse.json({ error: agentBusyMessage(lockHolder) }, { status: 409 });
   const companyId = Number((await params).id);
   const company = getDb().prepare("SELECT id, domain FROM companies WHERE id=?").get(companyId) as { id: number; domain: string } | undefined;
   if (!company) return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -62,6 +65,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return NextResponse.json({ ok: true, resumed: q?.decision === "qualified" });
     }
     case "approve": {
+      // A reviewer can approve a borderline company — never override a disqualification or a low score.
+      const q = repo.latestQualification(companyId);
+      if (q?.decision !== "needs_review" || (q.disqualification_reasons ?? []).length) {
+        return NextResponse.json({ error: `Only companies marked "needs review" can be approved (this one is "${q?.decision ?? "not researched"}").` }, { status: 400 });
+      }
       runInBackground([repo.createSingleRun(companyId, null)], { startAt: "contact", overrideNote: a.note });
       return NextResponse.json({ ok: true });
     }

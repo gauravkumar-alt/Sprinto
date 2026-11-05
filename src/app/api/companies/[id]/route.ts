@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSnapshot, isShowroom } from "@/lib/showroom";
-import { isRemoteViewer, maskPayload } from "@/lib/viewer";
+import { isRemoteViewer, publicCompanyDetail } from "@/lib/viewer";
 
 export const dynamic = "force-dynamic";
 
@@ -15,6 +15,6 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   recoverOnce();
   const detail = companyDetail(Number(id));
   if (!detail) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  if (isRemoteViewer(req)) return NextResponse.json({ ...maskPayload(detail), readOnly: true });
+  if (isRemoteViewer(req)) return NextResponse.json({ ...publicCompanyDetail(detail), readOnly: true });
   return NextResponse.json({ ...detail, readOnly: false });
 }

@@ -46,6 +46,7 @@ import { checkEmail, checkPainPoints, quoteAppearsIn, validRefs } from "./checks
 import { classifyTitleByRules, companyScale, contactConfidence, rankContacts, selectionReason } from "./contactRanking";
 import { decideQualification, finalizeUnresolved, researchTargets } from "./qualification";
 import { condensePages, pageType } from "./research";
+import { agentBusyMessage, agentLockHolder } from "@/lib/agent-lock";
 import { publishAfterRun } from "@/lib/showroom-publish";
 
 /** Thrown to end a company's pipeline early with a recorded outcome (not a crash). */
@@ -282,7 +283,7 @@ async function classifyAndDecide(ctx: Ctx, canResearchMore: boolean): Promise<Qu
   );
   return decideQualification({
     findings,
-    evidence: usable.map((e) => ({ ref: e.ref, type: e.evidenceType, text: `${e.claim} ${e.supportingText}`, url: e.sourceUrl, pageTag: e.sourceUrl ? pageType(e.sourceUrl, ctx.domain) : null })),
+    evidence: usable.map((e) => ({ ref: e.ref, type: e.evidenceType, text: `${e.claim} ${e.supportingText}`, quote: e.supportingText, url: e.sourceUrl, pageTag: e.sourceUrl ? pageType(e.sourceUrl, ctx.domain) : null })),
     checkedPages: ctx.checkedPages,
     pagesScraped: ctx.pagesScraped,
     canResearchMore,
@@ -357,15 +358,35 @@ async function qualifyWithResearchLoop(ctx: Ctx, eventId: number) {
     }
 
     // Optional external search (only when configured) for funding facts the website rarely states.
+    // Search only finds URLs; the article itself is fetched (robots.txt, SSRF checks) and quoted verbatim.
     if (!searched && ctx.P.search.available && result.stage_status === "unknown") {
       searched = true;
-      const q = `${ctx.domain} funding round Series`;
+      const name = ctx.nameHint || ctx.profile?.company_name || ctx.domain;
+      const q = `"${name}" ${ctx.domain} funding round raised Series`;
       rec.action.searchQueries.push(q);
       try {
         const nameRoot = ctx.domain.split(".")[0].toLowerCase();
-        for (const r of (await ctx.P.search.search(q)).slice(0, 3)) {
-          if (r.snippet.length < 40 || !`${r.url} ${r.title} ${r.snippet}`.toLowerCase().includes(nameRoot)) continue;
-          pages.push({ url: r.url, title: r.title, text: r.snippet, publishedAt: r.publishedAt, retrievedAt: new Date().toISOString(), sourceType: "search_result" });
+        let articles = 0;
+        for (const r of await ctx.P.search.search(q)) {
+          if (articles >= 2) break;
+          let host: string;
+          try {
+            host = new URL(r.url).hostname.replace(/^www\./, "");
+          } catch {
+            continue;
+          }
+          let fetched: FetchedPage[];
+          if (r.snippet.length >= 40) {
+            fetched = [{ url: r.url, title: r.title, text: r.snippet, publishedAt: r.publishedAt, retrievedAt: new Date().toISOString(), sourceType: "search_result" }];
+          } else {
+            const got = await ctx.P.research.startSession(host).fetchUrls([r.url], 1).catch(() => ({ pages: [] as FetchedPage[] }));
+            fetched = got.pages.map((p) => ({ ...p, sourceType: "search_result" as const }));
+          }
+          for (const p of fetched) {
+            if (!`${p.url} ${p.title} ${p.text}`.toLowerCase().includes(nameRoot)) continue;
+            pages.push(p);
+            articles++;
+          }
         }
       } catch (err) {
         repo.appendRunError(ctx.runId, "qualify", `Search failed: ${errorMessage(err)}`);
@@ -542,9 +563,17 @@ export async function processCompany(runId: number, opts: ProcessOptions = {}): 
       ctx.evidence = repo.getEvidenceForResearchRun(rr.id).filter((e) => e.sourceType !== "contact_provider");
       ctx.profile = repo.parseJson<CompanyProfile>(company.profile_json, {} as CompanyProfile);
       if (company.data_source === "mock") mock.add("research");
+      // Research or a qualification produced by the mock model (demo mode) must never feed a real email.
+      const mockEvidence = getDb().prepare("SELECT 1 FROM evidence WHERE research_run_id=? AND data_source='mock' LIMIT 1").get(rr.id);
+      if (rr.data_source === "mock" || mockEvidence) {
+        mock.add("research");
+        mock.add("llm");
+      }
       ctx.qualification = q;
       for (const s of ["research", "extract"] as const) repo.stageSkip(runId, s, "Reused from the previous run");
       if (q.decision !== "qualified") {
+        if (opts.overrideNote && (q.decision !== "needs_review" || q.disqualification_reasons?.length))
+          throw new StageStop((q.decision as CompanyOutcome) ?? "not_qualified", `Can't approve a company that is "${q.decision}" — only "needs review" can be approved.`);
         if (!opts.overrideNote) throw new StageStop((q.decision as CompanyOutcome) ?? "needs_review", `Company is "${q.decision}"; only qualified companies proceed to contact discovery.`);
         const overridden: QualificationResult = { ...q, decision: "qualified", explanation: `Manually approved after review: ${opts.overrideNote}. Original decision: ${q.decision} — ${q.explanation}` };
         repo.insertQualification(ctx.companyId, runId, 99, overridden, opts.overrideNote);
@@ -916,6 +945,8 @@ export async function retrySend(companyId: number, confirmUnknownOutcome: boolea
     | { id: number; contact_id: number; data_source: string }
     | undefined;
   if (!email) throw new Error("No email to send");
+  const holder = agentLockHolder();
+  if (holder !== null) throw new Error(agentBusyMessage(holder));
   const company = db.prepare("SELECT domain FROM companies WHERE id=?").get(companyId) as { domain: string };
   const contact = db.prepare("SELECT name, business_email FROM contacts WHERE id=?").get(email.contact_id) as { name: string; business_email: string | null };
   const P = getProvidersFor(company.domain);
@@ -947,6 +978,8 @@ const g = globalThis as unknown as { __outreachJobs?: Set<Promise<unknown>>; __o
 
 /** Fire-and-forget execution inside the long-running Node server; progress is durable in SQLite. */
 export function runInBackground(runIds: number[], opts: ProcessOptions = {}) {
+  const holder = agentLockHolder();
+  if (holder !== null) throw new Error(agentBusyMessage(holder));
   g.__outreachJobs ??= new Set();
   // After each batch, refresh the public read-only copy (Supabase) if configured.
   const job = runBatch(runIds, opts)
@@ -957,6 +990,7 @@ export function runInBackground(runIds: number[], opts: ProcessOptions = {}) {
 
 export function recoverOnce() {
   if (g.__outreachRecovered) return;
+  if (agentLockHolder() !== null) return; // another server owns the in-flight runs — never touch them
   g.__outreachRecovered = true;
   repo.markInterruptedRuns();
 }
