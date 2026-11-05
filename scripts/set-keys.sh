@@ -29,9 +29,21 @@ ask() {
 
 if [ "${1:-}" = "--supabase" ]; then
   # Public read-only site: the Mac publishes masked results to Supabase.
-  ask SUPABASE_URL              "Supabase Project URL (https://xxxx.supabase.co)" no
-  ask SUPABASE_ANON_KEY         "Supabase anon (public) key"                      no
-  ask SUPABASE_SERVICE_ROLE_KEY "Supabase service_role key (stays on this Mac)"   yes
+  # Keys are read straight from the clipboard (click Supabase's copy icon), so nothing gets cut off.
+  from_clipboard() {
+    local name="$1" label="$2" pattern="$3" value
+    while true; do
+      read -r -p "In Supabase, click the copy icon next to the $label, then press Enter here (or type s to skip): " answer
+      [ "$answer" = "s" ] && { echo "  – $name unchanged"; return; }
+      value="$(pbpaste | tr -d '[:space:]')"
+      if [[ "$value" =~ $pattern ]]; then set_var "$name" "$value"; echo "  ✓ $name saved (${#value} characters)"; return; fi
+      echo "  ✗ The clipboard doesn't hold a full $label (got ${#value} characters). Use the copy icon (two squares), not text selection."
+    done
+  }
+  ask SUPABASE_URL "Supabase Project URL (https://xxxx.supabase.co)" no
+  from_clipboard SUPABASE_ANON_KEY "Publishable key (sb_publishable_…)" '^(sb_publishable_[A-Za-z0-9_-]{20,}|eyJ[A-Za-z0-9._-]{100,})$'
+  from_clipboard SUPABASE_SERVICE_ROLE_KEY "Secret key (sb_secret_…)" '^(sb_secret_[A-Za-z0-9_-]{20,}|eyJ[A-Za-z0-9._-]{100,})$'
+  pbcopy < /dev/null  # don't leave the secret on the clipboard
 else
   ask LLM_API_KEY         "LLM API key (Gemini or Anthropic)" yes
   ask HUNTER_API_KEY      "Hunter.io API key"                 yes
