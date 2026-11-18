@@ -21,6 +21,9 @@ type Company = {
   disqualification: string[];
   contactName: string | null;
   contactTitle: string | null;
+  contactEmail: string | null;
+  contactEmailStatus: string | null;
+  sources: { website: number; external: number };
   painPoint1: string | null;
   painPoint2: string | null;
   emailStatus: string | null;
@@ -336,6 +339,11 @@ export default function Dashboard() {
                           {c.domain}
                           {c.dataSource === "mock" && <span style={{ color: "var(--mock)", fontWeight: 600 }}> · mock</span>}
                         </div>
+                        {c.sources.website + c.sources.external > 0 && (
+                          <div className="src-count" title={`${c.sources.website} pages from ${c.domain} · ${c.sources.external} outside sources (news, job boards, …)`}>
+                            {c.sources.website + c.sources.external} sources{c.sources.external ? ` · ${c.sources.external} outside` : ""}
+                          </div>
+                        )}
                       </td>
                       <td data-label="Score" data-empty={c.score === null || undefined}>
                         {c.score !== null ? (
@@ -369,6 +377,12 @@ export default function Dashboard() {
                           <>
                             <div>{c.contactName}</div>
                             <div className="faint clamp1" style={{ fontSize: 12 }}>{c.contactTitle}</div>
+                            {c.contactEmail && (
+                              <div className="contact-email" title={`Found by Hunter${c.contactEmailStatus ? ` · ${c.contactEmailStatus}` : ""} — stored only, never emailed`}>
+                                {c.contactEmail}
+                                {c.contactEmailStatus === "valid" && <span className="verified" aria-label="verified">✓</span>}
+                              </div>
+                            )}
                           </>
                         ) : (
                           <span className="faint">—</span>

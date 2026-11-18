@@ -50,7 +50,7 @@ export function publicCompanyDetail<T extends Row | null>(detail: T): T {
   const contacts = (d.contacts as Row[] | undefined) ?? [];
   d.contacts = contacts
     .filter((c) => c.selected)
-    .map((c) => ({ id: c.id, name: c.name, first_name: c.first_name, title: c.title, department: c.department, role_category: c.role_category, rank: c.rank, selected: c.selected, eligible: c.eligible, reason: c.reason, provider: c.provider, data_source: c.data_source, confidence: c.confidence, verification_status: c.verification_status, evidence_ids_json: "[]", business_email: "(hidden in shared view)" }));
+    .map((c) => ({ id: c.id, name: c.name, first_name: c.first_name, title: c.title, department: c.department, role_category: c.role_category, rank: c.rank, selected: c.selected, eligible: c.eligible, reason: c.reason, provider: c.provider, data_source: c.data_source, confidence: c.confidence, verification_status: c.verification_status, evidence_ids_json: "[]", business_email: c.business_email })); // addresses are masked by maskPayload below
   d.evidence = ((d.evidence as Row[] | undefined) ?? []).filter((e) => !/contact|hunter/i.test(`${e.category ?? ""} ${e.source_type ?? ""}`));
   d.sends = ((d.sends as Row[] | undefined) ?? []).map((s) => ({ id: s.id, status: s.status, provider: s.provider, delivery_recipient: s.delivery_recipient, attempted_at: s.attempted_at, completed_at: s.completed_at, error: s.error ? "Delivery error (details on the agent's computer)" : null }));
   return maskPayload(d) as T;

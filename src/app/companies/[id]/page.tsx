@@ -168,6 +168,7 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
           <div className="k">Decision-maker</div>
           <div className="v ellipsis">{selected?.name ?? "—"}</div>
           <div className="s ellipsis">{selected ? `${selected.title}${earlier ? " · earlier run" : ""}` : q?.decision === "qualified" ? "Not found" : "Qualified companies only"}</div>
+          {selected?.business_email && <div className="contact-email ellipsis" title="Found by Hunter — stored only, never emailed">{selected.business_email}{selected.verification_status === "valid" && <span className="verified">✓</span>}</div>}
         </div>
         <div>
           <div className="k">Pain points</div>
@@ -349,6 +350,25 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
               </dl>
             </section>
           )}
+          {d.pages?.length > 0 && (
+            <section className="panel">
+              <div className="panel-head">
+                <h3>Sources read</h3>
+                <span className="faint" style={{ fontSize: 12 }}>
+                  {d.pages.filter((p: any) => p.source_type === "website").length} from {c.domain} · {d.pages.filter((p: any) => p.source_type !== "website").length} outside (max 5)
+                </span>
+              </div>
+              <div className="sources">
+                {d.pages.map((p: any) => (
+                  <a key={p.id} href={isMock ? undefined : p.url} target="_blank" rel="noreferrer noopener" className={`source ${p.source_type === "website" ? "own" : "outside"}`} title={p.url}>
+                    <span className="kind">{p.source_type === "website" ? "Site" : "Outside"}</span>
+                    <span className="ellipsis">{p.title || p.url}</span>
+                    <span className="host">{(() => { try { return new URL(p.url).hostname.replace(/^www\./, ""); } catch { return ""; } })()}</span>
+                  </a>
+                ))}
+              </div>
+            </section>
+          )}
           <section className="panel">
             <div className="panel-head">
               <h3>Sources & evidence</h3>
@@ -400,7 +420,7 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
               <p style={{ margin: "14px 0 0" }}>{selected.reason}</p>
               <dl className="kv" style={{ marginTop: 14 }}>
                 <dt>Source</dt><dd>{selected.provider === "hunter" ? "Hunter.io" : selected.provider === "manual" ? "Entered manually" : "Mock"} <Refs ids={JSON.parse(selected.evidence_ids_json || "[]")} onClick={showEvidence} /></dd>
-                <dt>Email (not used)</dt><dd>{selected.business_email ?? "—"}{selected.verification_status ? <span className="faint"> · {selected.verification_status}</span> : null}</dd>
+                <dt>Email (found, never emailed)</dt><dd>{selected.business_email ?? "—"}{selected.verification_status ? <span className="faint"> · {selected.verification_status}</span> : null}</dd>
               </dl>
             </>
           ) : (

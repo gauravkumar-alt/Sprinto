@@ -71,8 +71,20 @@ class WebsiteCrawlSession implements CrawlSession {
     await hostLimiter.wait(host, delay);
   }
 
+  /** Links from the company's own pages to its job board (Greenhouse, Lever, Ashby, …). */
+  private boardLinks = new Set<string>();
+  jobBoardLinks() {
+    return [...this.boardLinks];
+  }
+
   private addCandidates(urls: string[]) {
     for (const raw of urls) {
+      try {
+        const u = new URL(raw);
+        if (/(^|\.)(lever\.co|greenhouse\.io|ashbyhq\.com|workable\.com)$/i.test(u.hostname)) this.boardLinks.add(u.toString());
+      } catch {
+        /* relative or malformed — handled by scoreUrl */
+      }
       const c = scoreUrl(raw, this.domain);
       if (!c || this.visited.has(c.url)) continue;
       const prev = this.candidates.get(c.url);

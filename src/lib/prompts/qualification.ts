@@ -45,6 +45,7 @@ STRICT RULES:
 - Customer logos alone are not enterprise security reviews.
 - found=false with an empty evidence_ids list when there is no direct evidence. Never guess.
 - confidence 0-1 per criterion.
+- Evidence whose claim starts "Third-party source reports:" comes from outside sources (news articles, the company's job board). Cite it for funding_series_ac, open_roles and compliance_hiring when it clearly concerns this company; it cannot establish anything else.
 
 ${HONESTY_RULES}
 

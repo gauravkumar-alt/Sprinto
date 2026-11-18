@@ -44,10 +44,11 @@ import type {
 import { clamp01, createLimiter, errorMessage, sha256, truncate } from "@/lib/util";
 import { checkEmail, checkPainPoints, quoteAppearsIn, validRefs } from "./checks";
 import { classifyTitleByRules, companyScale, contactConfidence, rankContacts, selectionReason } from "./contactRanking";
-import { decideQualification, finalizeUnresolved, researchTargets } from "./qualification";
+import { JOB_BOARD_HOSTS, decideQualification, finalizeUnresolved, researchTargets } from "./qualification";
 import { condensePages, pageType } from "./research";
 import { agentBusyMessage, agentLockHolder } from "@/lib/agent-lock";
 import { publishAfterRun } from "@/lib/showroom-publish";
+import { findJobBoard, hackerNewsUrls, newsUrls } from "@/lib/providers/research/free-sources";
 
 /** Thrown to end a company's pipeline early with a recorded outcome (not a crash). */
 class StageStop extends Error {
@@ -303,6 +304,78 @@ interface LoopRound {
   stopReason?: string;
 }
 
+function externalQueries(ctx: Ctx): string[] {
+  const name = ctx.nameHint || ctx.profile?.company_name || ctx.domain;
+  return [
+    `"${name}" ${ctx.domain} funding round raised Series investors`,
+    `"${name}" ${ctx.domain} jobs careers open roles`,
+    `"${name}" ${ctx.domain} SOC 2 OR ISO 27001 OR security compliance`,
+  ];
+}
+
+/**
+ * Up to RESEARCH_MAX_EXTERNAL_SOURCES free outside sources per company (default 5): news and press about funding,
+ * the company's job board, and pages about its security/compliance work. Search only finds URLs; every page is
+ * fetched (robots.txt, SSRF checks) and quoted verbatim, and its text is stored as third-party evidence.
+ */
+async function gatherExternalSources(ctx: Ctx): Promise<FetchedPage[]> {
+  const cap = getConfig().research.maxExternalSources;
+  if (cap <= 0 || isMockDomain(ctx.domain)) return [];
+  const name = ctx.nameHint || ctx.profile?.company_name || null;
+  const nameRoot = ctx.domain.split(".")[0].toLowerCase();
+  const picked: FetchedPage[] = [];
+  const perHost = new Map<string, number>();
+  const take = (p: FetchedPage, host: string) => {
+    picked.push(p);
+    perHost.set(host, (perHost.get(host) ?? 0) + 1);
+    ctx.checkedPages.add(JOB_BOARD_HOSTS.test(host) ? "hiring" : "funding/news");
+  };
+
+  // 1. The company's job board (official public posting APIs: Greenhouse, Lever, Ashby).
+  const board = await findJobBoard(name, ctx.domain, ctx.session?.jobBoardLinks?.() ?? []).catch(() => null);
+  if (board) take(board, new URL(board.url).hostname);
+
+  // 2. Article URLs: web search (when configured), GDELT news, Hacker News — all fetched and quoted verbatim.
+  const candidates: { url: string; title: string; snippet?: string; publishedAt?: string | null }[] = [];
+  if (ctx.P.search.available) {
+    for (const q of externalQueries(ctx)) {
+      try {
+        candidates.push(...(await ctx.P.search.search(q)));
+      } catch (err) {
+        repo.appendRunError(ctx.runId, "research", `Web search unavailable (${errorMessage(err).slice(0, 80)}) — using free news sources`);
+        break; // rate-limited or down: don't hammer it, fall through to the free sources
+      }
+    }
+  }
+  const label = name ?? nameRoot;
+  candidates.push(...(await newsUrls(label).catch(() => [])), ...(await hackerNewsUrls(label, ctx.domain).catch(() => [])));
+
+  for (const r of candidates) {
+    if (picked.length >= cap) break;
+    let u: URL;
+    try {
+      u = new URL(r.url);
+    } catch {
+      continue;
+    }
+    // Outside sources only (the company's own pages come from the crawler), at most 2 per site, no duplicates.
+    const host = u.hostname.replace(/^www\./, "");
+    if (sameSite(u, ctx.domain) || picked.some((p) => p.url === r.url) || (perHost.get(host) ?? 0) >= 2) continue;
+    let fetched: FetchedPage[];
+    if ((r.snippet ?? "").length >= 40) {
+      fetched = [{ url: r.url, title: r.title, text: r.snippet!, publishedAt: r.publishedAt ?? null, retrievedAt: new Date().toISOString(), sourceType: "search_result" }];
+    } else {
+      const got = await ctx.P.research.startSession(host).fetchUrls([r.url], 1).catch(() => ({ pages: [] as FetchedPage[] }));
+      fetched = got.pages.map((p) => ({ ...p, sourceType: "search_result" as const }));
+    }
+    for (const p of fetched) if (`${p.url} ${p.title} ${p.text}`.toLowerCase().includes(nameRoot)) take(p, host); // must be about this company
+  }
+  if (!picked.length) return [];
+  const { added } = await storePagesAndCollectEvidence(ctx, picked.slice(0, cap), 0, ["funding", "open roles", "security and compliance"]);
+  if (added.length) ctx.evidence = [...ctx.evidence, ...added];
+  return picked.slice(0, cap);
+}
+
 /**
  * Targeted research loop: after the homepage, fetch only the page type most likely to answer each open
  * critical question (Product/About → business model, Careers → growth, Security/Trust → compliance and
@@ -313,7 +386,13 @@ async function qualifyWithResearchLoop(ctx: Ctx, eventId: number) {
   const canFetch = () => Boolean(ctx.session) && !ctx.reusedResearch && ctx.additionalFetched < cfg.maxAdditionalPages;
   const rounds: LoopRound[] = [];
   let round = 0;
-  let searched = false;
+  // Outside sources first (news, job boards, compliance mentions) so the first decision already sees them.
+  if (!ctx.reusedResearch) {
+    repo.stageEnd(eventId, "completed", "Checking outside sources (news, job boards)…");
+    getDb().prepare("UPDATE stage_events SET status='running' WHERE id=?").run(eventId);
+    const ext = await gatherExternalSources(ctx);
+    if (ext.length) rounds.push({ round: 0, gaps: [], action: { urls: ext.map((p) => p.url), pageTypes: ["outside sources"], searchQueries: externalQueries(ctx) }, newSources: ext.map((p) => p.url), newEvidence: [], decisionBefore: "-", decisionAfter: "-", scoreBefore: 0, scoreAfter: 0 });
+  }
   let result = await classifyAndDecide(ctx, canFetch());
   repo.insertQualification(ctx.companyId, ctx.runId, round, result);
 
@@ -355,42 +434,6 @@ async function qualifyWithResearchLoop(ctx: Ctx, eventId: number) {
       // Looked for this page type: checked, even if the site has no such page (→ NOT_FOUND, not UNKNOWN).
       ctx.checkedPages.add(tag);
       rec.action.pageTypes.push(got ? tag : `${tag} (none)`);
-    }
-
-    // Optional external search (only when configured) for funding facts the website rarely states.
-    // Search only finds URLs; the article itself is fetched (robots.txt, SSRF checks) and quoted verbatim.
-    if (!searched && ctx.P.search.available && result.stage_status === "unknown") {
-      searched = true;
-      const name = ctx.nameHint || ctx.profile?.company_name || ctx.domain;
-      const q = `"${name}" ${ctx.domain} funding round raised Series`;
-      rec.action.searchQueries.push(q);
-      try {
-        const nameRoot = ctx.domain.split(".")[0].toLowerCase();
-        let articles = 0;
-        for (const r of await ctx.P.search.search(q)) {
-          if (articles >= 2) break;
-          let host: string;
-          try {
-            host = new URL(r.url).hostname.replace(/^www\./, "");
-          } catch {
-            continue;
-          }
-          let fetched: FetchedPage[];
-          if (r.snippet.length >= 40) {
-            fetched = [{ url: r.url, title: r.title, text: r.snippet, publishedAt: r.publishedAt, retrievedAt: new Date().toISOString(), sourceType: "search_result" }];
-          } else {
-            const got = await ctx.P.research.startSession(host).fetchUrls([r.url], 1).catch(() => ({ pages: [] as FetchedPage[] }));
-            fetched = got.pages.map((p) => ({ ...p, sourceType: "search_result" as const }));
-          }
-          for (const p of fetched) {
-            if (!`${p.url} ${p.title} ${p.text}`.toLowerCase().includes(nameRoot)) continue;
-            pages.push(p);
-            articles++;
-          }
-        }
-      } catch (err) {
-        repo.appendRunError(ctx.runId, "qualify", `Search failed: ${errorMessage(err)}`);
-      }
     }
 
     rec.newSources = pages.map((p) => p.url);

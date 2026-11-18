@@ -49,6 +49,7 @@ export function getConfig() {
       /** One homepage request, then at most this many targeted page fetches per company. */
       maxAdditionalPages: num("RESEARCH_MAX_ADDITIONAL_PAGES", 4),
       maxPagesPerRound: num("RESEARCH_MAX_PAGES_PER_ROUND", 2),
+      maxExternalSources: num("RESEARCH_MAX_EXTERNAL_SOURCES", 5), // news, job boards, compliance mentions
       maxAdditionalRounds: num("RESEARCH_MAX_ROUNDS", 3),
       /** Cleaned content sent to the model per research pass (~2,000 tokens). */
       contextBudgetChars: num("RESEARCH_CONTEXT_CHARS", 8000),

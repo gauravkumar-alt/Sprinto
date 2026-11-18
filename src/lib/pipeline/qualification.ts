@@ -35,6 +35,18 @@ const HELPS_OTHERS_RE = /\bhelps?\b[^.]{0,40}\b(get|achieve|become|pass|prepare|
 const ARTICLE_PAGES = new Set(["blog", "docs"]);
 const JOB_TEXT = /\bhiring\b|\bopen (roles?|positions?)\b|\bjobs?\b|\bvacanc|\bjoin (our|the) team\b|\bwe['’]re looking for\b|\bposition\b|\brole\b/i;
 
+/** Job-board hosts: a company's own postings published through its applicant-tracking system. */
+export const JOB_BOARD_HOSTS = /(^|\.)(lever\.co|greenhouse\.io|ashbyhq\.com|workable\.com|bamboohr\.com|recruitee\.com|smartrecruiters\.com|wellfound\.com|ycombinator\.com)$/i;
+export function isJobBoardUrl(url: string | null | undefined): boolean {
+  try {
+    return Boolean(url) && JOB_BOARD_HOSTS.test(new URL(url!).hostname);
+  } catch {
+    return false;
+  }
+}
+/** Criteria an outside source may satisfy, and which kind of outside source. */
+const THIRD_PARTY_CRITERIA: Partial<Record<CriterionId, "any" | "job_board">> = { funding_series_ac: "any", open_roles: "job_board", compliance_hiring: "job_board" };
+
 /** Text each criterion's supporting QUOTE (never the model's own claim) must contain to count as direct evidence. */
 const PATTERNS: Partial<Record<CriterionId, RegExp[]>> = {
   // SaaS delivery: the word itself, a hosted product, or self-serve subscription plans ("free plan", "no credit card", "/month").
@@ -98,14 +110,19 @@ export function decideQualification(params: {
     let matching = valid.filter((ref) => (PATTERNS[def.id] ?? []).every((re) => re.test(quoteOf(ref))) && quoteFits(def.id, quoteOf(ref), byRef.get(ref)!.pageTag));
     // Funding is rarely on the company's own site: a verbatim quote from a fetched news article / press release counts,
     // labelled as third-party. Nothing else can be scored from third-party pages.
-    if (def.id === "funding_series_ac" && matching.length === 0) {
-      const thirdParty = (f?.evidence_ids ?? []).filter((id) => {
+    // Outside sources can satisfy only the facts they're reliable for, always quoted verbatim and labelled:
+    // funding from news/press articles, open roles and compliance hiring from the company's own job board.
+    const outsideOk = THIRD_PARTY_CRITERIA[def.id];
+    if (outsideOk && matching.length === 0 && f?.found) {
+      const thirdParty = (f.evidence_ids ?? []).filter((id) => {
         const e = byRef.get(id);
-        return e?.type === "inference" && /^Third-party source reports:/.test(e.text) && (PATTERNS.funding_series_ac ?? []).every((re) => re.test(e.quote ?? e.text));
+        if (e?.type !== "inference" || !/^Third-party source reports:/.test(e.text)) return false;
+        if (outsideOk === "job_board" && !isJobBoardUrl(e.url)) return false;
+        return (PATTERNS[def.id] ?? []).every((re) => re.test(e.quote ?? e.text)) && quoteFits(def.id, e.quote ?? e.text, outsideOk === "job_board" ? "hiring" : e.pageTag);
       });
-      if (thirdParty.length && f?.found) {
+      if (thirdParty.length) {
         matching = thirdParty;
-        adjustments.push("Funding stage taken from a third-party article (quoted verbatim)");
+        adjustments.push(outsideOk === "job_board" ? `${def.label}: from the company's job board (quoted verbatim)` : "Funding stage taken from a third-party article (quoted verbatim)");
       }
     }
     let found = Boolean(f?.found) && matching.length > 0;

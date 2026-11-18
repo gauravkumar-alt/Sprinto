@@ -29,6 +29,8 @@ export interface CrawlSession {
   /** Discovered but unvisited same-site URLs, best first. */
   unvisitedCandidates(limit: number): CandidateUrl[];
   pagesFetched(): number;
+  /** Off-site links to the company's job board found on its own pages. */
+  jobBoardLinks?(): string[];
 }
 
 export interface ResearchProvider {

@@ -139,3 +139,13 @@ describe("audit regressions", () => {
     expect(prepStatus(r as never)).not.toBe("FOUND");
   });
 });
+
+describe("outside sources", () => {
+  const status = (r: ReturnType<typeof run>, id: string) => Object.values(r.categories).flatMap((c) => c.criteria).find((c) => c.id === id)!.status;
+  it("a job board can establish open roles and compliance hiring; a random article can't", () => {
+    const board: EvidenceLite = { ref: "E40", type: "inference", text: "Third-party source reports: Acme is hiring a Security Engineer.", quote: "Security Engineer — Remote. We're hiring for this role.", url: "https://jobs.lever.co/acme/123" };
+    const blog: EvidenceLite = { ref: "E41", type: "inference", text: "Third-party source reports: Acme is hiring a Security Engineer.", quote: "Security Engineer — Remote. We're hiring for this role.", url: "https://someblog.example/acme" };
+    expect(status(run("x", {}, [board], { compliance_hiring: ["E40"] }), "compliance_hiring")).toBe("FOUND");
+    expect(status(run("x", {}, [blog], { compliance_hiring: ["E41"] }), "compliance_hiring")).not.toBe("FOUND");
+  });
+});

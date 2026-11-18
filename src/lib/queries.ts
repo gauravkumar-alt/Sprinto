@@ -76,9 +76,15 @@ export function listCompanies() {
       | { result_json: string; decision: string; score: number }
       | undefined;
     const qr = q ? parseJson<QualificationResult>(q.result_json, {} as QualificationResult) : null;
-    const contact = db.prepare("SELECT name, title, provider, data_source FROM contacts WHERE company_id=? AND selected=1 ORDER BY id DESC LIMIT 1").get(c.id) as
-      | { name: string; title: string; provider: string; data_source: string }
-      | undefined;
+    const contact = db
+      .prepare("SELECT name, title, business_email, verification_status, provider, data_source FROM contacts WHERE company_id=? AND selected=1 ORDER BY id DESC LIMIT 1")
+      .get(c.id) as { name: string; title: string; business_email: string | null; verification_status: string | null; provider: string; data_source: string } | undefined;
+    // Where the latest research came from: the company's own site vs outside sources (news, job boards, …).
+    const sourceRows = db
+      .prepare(
+        "SELECT source_type, COUNT(*) n FROM pages WHERE research_run_id=(SELECT id FROM research_runs WHERE company_id=? AND status='completed' ORDER BY id DESC LIMIT 1) GROUP BY source_type",
+      )
+      .all(c.id) as { source_type: string; n: number }[];
     const pps = db
       .prepare("SELECT statement FROM pain_points WHERE company_id=? AND agent_run_id=(SELECT MAX(agent_run_id) FROM pain_points WHERE company_id=?) ORDER BY position")
       .all(c.id, c.id) as { statement: string }[];
@@ -104,6 +110,13 @@ export function listCompanies() {
       disqualification: [...(qr?.flags ?? []), ...(qr?.disqualification_reasons ?? [])],
       contactName: contact?.name ?? null,
       contactTitle: contact?.title ?? null,
+      contactEmail: contact?.business_email ?? null,
+      contactEmailStatus: contact?.verification_status ?? null,
+      contactProvider: contact?.provider ?? null,
+      sources: {
+        website: sourceRows.find((r) => r.source_type === "website")?.n ?? 0,
+        external: sourceRows.filter((r) => r.source_type !== "website").reduce((a, r) => a + r.n, 0),
+      },
       painPoint1: pps[0]?.statement ?? null,
       painPoint2: pps[1]?.statement ?? null,
       emailStatus: email?.status ?? null,
