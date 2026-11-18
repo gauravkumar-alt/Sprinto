@@ -23,7 +23,7 @@ type Company = {
   contactTitle: string | null;
   contactEmail: string | null;
   contactEmailStatus: string | null;
-  sources: { website: number; external: number };
+  sources: { website: number; external: number; checked: number; contact: string | null };
   painPoint1: string | null;
   painPoint2: string | null;
   emailStatus: string | null;
@@ -339,9 +339,12 @@ export default function Dashboard() {
                           {c.domain}
                           {c.dataSource === "mock" && <span style={{ color: "var(--mock)", fontWeight: 600 }}> · mock</span>}
                         </div>
-                        {c.sources.website + c.sources.external > 0 && (
-                          <div className="src-count" title={`${c.sources.website} pages from ${c.domain} · ${c.sources.external} outside sources (news, job boards, …)`}>
-                            {c.sources.website + c.sources.external} sources{c.sources.external ? ` · ${c.sources.external} outside` : ""}
+                        {c.sources.checked > 0 && (
+                          <div
+                            className="src-count"
+                            title={`Looked at ${c.sources.checked} sources; used ${c.sources.website + c.sources.external}: ${c.sources.website} pages from ${c.domain}, ${c.sources.external} outside (news, job boards)${c.sources.contact ? `; contact from ${c.sources.contact}` : ""}`}
+                          >
+                            {c.sources.checked} checked · {c.sources.website + c.sources.external} used
                           </div>
                         )}
                       </td>

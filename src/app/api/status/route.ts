@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSnapshot, isShowroom } from "@/lib/showroom";
-import { isRemoteViewer, maskPayload } from "@/lib/viewer";
+import { contactEmailsOf, isRemoteViewer, maskPayload } from "@/lib/viewer";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +17,6 @@ export async function GET(req: Request) {
   recoverOnce();
   const payload = { providers: providerStatus(), metrics: dashboardMetrics(), batches: recentBatches(), companies: listCompanies() };
   // Shared-link viewers get a read-only view with email addresses partly masked.
-  if (isRemoteViewer(req)) return NextResponse.json({ ...maskPayload(payload), readOnly: true });
+  if (isRemoteViewer(req)) return NextResponse.json({ ...maskPayload(payload, contactEmailsOf(payload)), readOnly: true });
   return NextResponse.json({ ...payload, readOnly: false });
 }

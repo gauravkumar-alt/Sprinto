@@ -176,6 +176,13 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
           <div className="s">{d.painPoints.length ? (d.painPoints.some((p: any) => p.type === "direct") ? `${d.painPoints.filter((p: any) => p.type === "direct").length} backed by quotes` : "From role and company profile") : "Qualified companies only"}</div>
         </div>
         <div>
+          <div className="k">Sources</div>
+          <div className="v">{Math.max(d.research?.sources_checked ?? 0, d.pages.length)} checked</div>
+          <div className="s ellipsis" title="Read and used for the score: pages from the company's site + outside sources (news, job boards); contact from Hunter">
+            {d.pages.length} used · {d.pages.filter((p: any) => p.source_type === "website").length} site, {d.pages.filter((p: any) => p.source_type !== "website").length} outside{selected?.provider === "hunter" ? " · Hunter" : ""}
+          </div>
+        </div>
+        <div>
           <div className="k">Email</div>
           <div className="v">{send ? (earlier ? <span className="badge b-mute">Sent earlier</span> : <StatusBadge status={send.status} />) : email ? <StatusBadge status={email.status} /> : "—"}</div>
           <div className="s ellipsis">{send?.completed_at ? (earlier ? "Under earlier scoring" : fmt(send.completed_at)) : email ? `Validation: ${email.validation_status}` : "Not written"}</div>

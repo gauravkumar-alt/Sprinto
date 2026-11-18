@@ -8,7 +8,7 @@ import { companyDetail, dashboardMetrics, listCompanies, recentBatches } from ".
 import { qualificationReport } from "./report";
 import * as repo from "./repo";
 import { supabaseHeaders, type Snapshot } from "./showroom";
-import { hasFullEmail, maskPayload, publicCompanyDetail } from "./viewer";
+import { contactEmailsOf, hasFullEmail, maskPayload, publicCompanyDetail } from "./viewer";
 
 export function buildSnapshot(): Snapshot {
   // Real research only: fictional .example demo companies stay on this computer.
@@ -20,7 +20,7 @@ export function buildSnapshot(): Snapshot {
     const q = repo.latestQualification(c.id);
     if (q?.categories) reports[c.id] = qualificationReport(q, c.domain, c.name);
   }
-  const snap = maskPayload({
+  const raw = {
     generatedAt: new Date().toISOString(),
     status: {
       providers: providerStatus(),
@@ -41,8 +41,10 @@ export function buildSnapshot(): Snapshot {
     },
     companies: details,
     qualification: reports,
-  }) as Snapshot;
-  if (hasFullEmail(JSON.stringify(snap))) throw new Error("Snapshot still contains a full email address — not published.");
+  };
+  const keep = contactEmailsOf(raw);
+  const snap = maskPayload(raw, keep) as Snapshot;
+  if (hasFullEmail(JSON.stringify(snap), keep)) throw new Error("Snapshot still contains an unmasked email address — not published.");
   return snap;
 }
 

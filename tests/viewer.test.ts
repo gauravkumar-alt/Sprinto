@@ -26,7 +26,7 @@ describe("masking", () => {
 });
 
 describe("public company detail", () => {
-  it("keeps only the selected contact's name/title, drops other people, contact evidence and Gmail ids", () => {
+  it("keeps only the selected contact (name, title, full work email); drops other people, contact evidence and Gmail ids", () => {
     const d = publicCompanyDetail({
       contacts: [
         { id: 1, name: "Lucas Smith", title: "CTO", business_email: "lucas@acme.com", selected: 1, rank_score: 0.9 },
@@ -40,10 +40,12 @@ describe("public company detail", () => {
     });
     const json = JSON.stringify(d);
     expect(json).not.toContain("Other Person");
-    expect(json).not.toContain("lucas@");
+    expect(json).toContain("lucas@acme.com");
+    expect(json).not.toContain("other@");
+    expect(json).not.toContain("me@x.com");
     expect(json).not.toContain("gmail_message_id");
     expect((d.contacts as unknown[]).length).toBe(1);
     expect((d.evidence as unknown[]).length).toBe(1);
-    expect(hasFullEmail(json)).toBe(false);
+    expect(hasFullEmail(json, ["lucas@acme.com"])).toBe(false);
   });
 });

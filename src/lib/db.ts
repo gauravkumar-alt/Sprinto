@@ -73,6 +73,7 @@ CREATE TABLE IF NOT EXISTS research_runs (
   rounds_json TEXT NOT NULL DEFAULT '[]',
   research_rounds INTEGER NOT NULL DEFAULT 0,
   source_count INTEGER NOT NULL DEFAULT 0,
+  sources_checked INTEGER NOT NULL DEFAULT 0,  -- every URL the research looked at (read, blocked, empty or off-topic)
   reused_from INTEGER,
   data_source TEXT NOT NULL DEFAULT 'real',
   started_at TEXT NOT NULL,
@@ -266,6 +267,9 @@ export function openDb(url: string): DB {
   if (file !== ":memory:") fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const db = new Database(file);
   db.exec(SCHEMA);
+  // Columns added after the first release (CREATE TABLE IF NOT EXISTS doesn't add them to existing databases).
+  const cols = (db.prepare("PRAGMA table_info(research_runs)").all() as { name: string }[]).map((c) => c.name);
+  if (!cols.includes("sources_checked")) db.exec("ALTER TABLE research_runs ADD COLUMN sources_checked INTEGER NOT NULL DEFAULT 0");
   if (file !== ":memory:") {
     // The database holds the Gmail refresh token and contact data: owner-only access.
     fs.chmodSync(path.dirname(file), 0o700);

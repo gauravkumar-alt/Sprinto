@@ -76,6 +76,8 @@ interface Ctx {
   checkedPages: Set<string>;
   pagesScraped: string[];
   additionalFetched: number;
+  /** Every URL looked at during research (read, blocked by robots.txt, empty, off-topic or failed). */
+  looked: Set<string>;
 }
 
 export interface ProcessOptions {
@@ -334,6 +336,7 @@ async function gatherExternalSources(ctx: Ctx): Promise<FetchedPage[]> {
   // 1. The company's job board (official public posting APIs: Greenhouse, Lever, Ashby).
   const board = await findJobBoard(name, ctx.domain, ctx.session?.jobBoardLinks?.() ?? []).catch(() => null);
   if (board) take(board, new URL(board.url).hostname);
+  for (const ats of ["Greenhouse", "Lever", "Ashby"]) ctx.looked.add(`${ats} job board for ${ctx.domain}`);
 
   // 2. Article URLs: web search (when configured), GDELT news, Hacker News — all fetched and quoted verbatim.
   const candidates: { url: string; title: string; snippet?: string; publishedAt?: string | null }[] = [];
@@ -361,6 +364,7 @@ async function gatherExternalSources(ctx: Ctx): Promise<FetchedPage[]> {
     // Outside sources only (the company's own pages come from the crawler), at most 2 per site, no duplicates.
     const host = u.hostname.replace(/^www\./, "");
     if (sameSite(u, ctx.domain) || picked.some((p) => p.url === r.url) || (perHost.get(host) ?? 0) >= 2) continue;
+    ctx.looked.add(r.url);
     let fetched: FetchedPage[];
     if ((r.snippet ?? "").length >= 40) {
       fetched = [{ url: r.url, title: r.title, text: r.snippet!, publishedAt: r.publishedAt ?? null, retrievedAt: new Date().toISOString(), sourceType: "search_result" }];
@@ -424,6 +428,7 @@ async function qualifyWithResearchLoop(ctx: Ctx, eventId: number) {
       for (const opt of options) {
         const r = await ctx.session!.fetchUrls([opt.url], 1);
         rec.action.urls.push(opt.url);
+        ctx.looked.add(opt.url);
         if (r.pages.length) {
           pages.push(...r.pages);
           ctx.additionalFetched++;
@@ -454,7 +459,7 @@ async function qualifyWithResearchLoop(ctx: Ctx, eventId: number) {
     result = finalizeUnresolved(result);
     repo.insertQualification(ctx.companyId, ctx.runId, round, result);
   }
-  repo.updateResearchRun(ctx.researchRunId, { rounds, researchRounds: round, status: "completed", complete: true });
+  repo.updateResearchRun(ctx.researchRunId, { rounds, researchRounds: round, status: "completed", complete: true, sourcesChecked: ctx.looked.size });
   return { result, rounds };
 }
 
@@ -594,6 +599,7 @@ export async function processCompany(runId: number, opts: ProcessOptions = {}): 
       checkedPages: new Set(),
       pagesScraped: [],
       additionalFetched: 0,
+      looked: new Set(),
     };
 
     if (opts.startAt === "contact") {
@@ -645,6 +651,7 @@ export async function processCompany(runId: number, opts: ProcessOptions = {}): 
         ctx.session = P.research.startSession(run.domain);
         // One initial request: the homepage. Further pages are fetched only when evidence is missing.
         const crawl = await ctx.session.initialCrawl(1);
+        for (const l of crawl.log) ctx.looked.add(l.url);
         if (!crawl.reachable) {
           repo.updateResearchRun(ctx.researchRunId, { status: "failed", complete: true });
           repo.stageEnd(eventId, "failed", "Website unreachable", { log: crawl.log }, crawl.log.map((l) => `${l.url}: ${l.detail ?? l.outcome}`).join("; "));

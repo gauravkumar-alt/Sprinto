@@ -149,13 +149,13 @@ export function createResearchRun(companyId: number, runId: number, dataSource: 
   );
 }
 
-export function updateResearchRun(id: number, p: { status?: string; rounds?: unknown; researchRounds?: number; complete?: boolean }) {
+export function updateResearchRun(id: number, p: { status?: string; rounds?: unknown; researchRounds?: number; complete?: boolean; sourcesChecked?: number }) {
   const db = getDb();
   const sourceCount = (db.prepare("SELECT COUNT(*) n FROM pages WHERE research_run_id=?").get(id) as { n: number }).n;
   db.prepare(
     `UPDATE research_runs SET status=COALESCE(?, status), rounds_json=COALESCE(?, rounds_json), research_rounds=COALESCE(?, research_rounds),
-       source_count=?, completed_at=CASE WHEN ? THEN ? ELSE completed_at END WHERE id=?`,
-  ).run(p.status ?? null, p.rounds ? j(p.rounds) : null, p.researchRounds ?? null, sourceCount, p.complete ? 1 : 0, nowIso(), id);
+       source_count=?, sources_checked=MAX(sources_checked, COALESCE(?, 0)), completed_at=CASE WHEN ? THEN ? ELSE completed_at END WHERE id=?`,
+  ).run(p.status ?? null, p.rounds ? j(p.rounds) : null, p.researchRounds ?? null, sourceCount, p.sourcesChecked ?? null, p.complete ? 1 : 0, nowIso(), id);
 }
 
 export function insertPage(
