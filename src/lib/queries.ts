@@ -107,6 +107,7 @@ export function listCompanies() {
           }
         : null,
       disqualification: [...(qr?.flags ?? []), ...(qr?.disqualification_reasons ?? [])],
+      found: qr?.categories ? Object.values(qr.categories).flatMap((cat) => cat.criteria.filter((x) => x.status === "FOUND").map((x) => x.id)) : [],
       contactName: contact?.name ?? null,
       contactTitle: contact?.title ?? null,
       contactEmail: contact?.business_email ?? null,

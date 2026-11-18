@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { z } from "zod/v4";
 import { contactSelectionPrompt } from "@/lib/prompts";
 import { runPrompt } from "@/lib/providers/llm";
 import { GeminiLLMProvider, resetGeminiCooldowns } from "@/lib/providers/llm/gemini";
@@ -82,5 +83,21 @@ describe("Gemini timeouts", () => {
     const out = await runPrompt(new GeminiLLMProvider("k", f), contactSelectionPrompt, input);
     expect(out.classifications[0].category).toBe("head_of_security");
     expect(urls.map((u) => u.match(/models\/([^:]+)/)![1])).toEqual(["primary-model", "fallback-a"]);
+  });
+});
+
+describe("Gemini overload", () => {
+  it("waits and retries an overloaded model instead of failing the run", async () => {
+    resetGeminiCooldowns();
+    let n = 0;
+    const f = (async () => {
+      n++;
+      if (n <= 2) return new Response(JSON.stringify({ error: { message: "overloaded" } }), { status: 503 });
+      return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: '{"ok":true}' }] }, finishReason: "STOP" }] }), { status: 200 });
+    }) as unknown as typeof fetch;
+    // Every configured model answers 503 once (1 model here); the waits then retry until it recovers.
+    const p = new GeminiLLMProvider("k", f, [0, 0]);
+    const out = await p.complete({ task: "contact_selection", system: "s", user: "u", schema: z.object({ ok: z.boolean() }), input: {} } as never);
+    expect(out.text ?? JSON.stringify(out.object)).toContain("ok");
   });
 });

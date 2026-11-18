@@ -19,6 +19,7 @@ type Company = {
   signals: { saas: string; audit: string; enterprise: string } | null;
   breakdown: { business: number; growth: number; compliance: number; enterprise: number } | null;
   disqualification: string[];
+  found: string[];
   contactName: string | null;
   contactTitle: string | null;
   contactEmail: string | null;
@@ -52,6 +53,27 @@ const matches = (c: Company, f: Filter) =>
 const sentEarlier = (c: Company) => ["sent", "simulated"].includes(c.emailStatus ?? "") && c.decision !== "qualified";
 
 const MOCK_DEMO = "vaultlane.example\nledgerly.example\nnorthpeak-consulting.example\norbitboard.example\npromptbait.example";
+
+/** One short line saying why a company didn't qualify (or what it still lacks). */
+function whyLine(c: Company, status: string): string | null {
+  if (status === "failed") return "Run stopped (AI service busy) — re-run";
+  if (!c.decision && status === "needs_review") return "Website couldn't be read (down or JavaScript-only)";
+  if (!c.decision || c.decision === "qualified") return null;
+  const dq = c.disqualification ?? [];
+  const cert = dq.find((d) => d.startsWith("Already certified"));
+  if (cert) return `Rejected: already has ${cert.replace(/^Already certified \(|\)$/g, "").split(", ").slice(0, 2).join(" + ")}`;
+  if (dq.some((d) => d.startsWith("Not a SaaS"))) return "Rejected: not a SaaS business";
+  if (dq.some((d) => d.startsWith("Primarily B2C"))) return "Rejected: sells to consumers";
+  if (dq.some((d) => d.startsWith("Outside target"))) return "Rejected: outside Sprinto's target";
+  const f = new Set(c.found);
+  const gaps: string[] = [];
+  if (!f.has("preparing_certification") && !f.has("compliance_hiring")) gaps.push("no SOC 2 prep");
+  if (!f.has("funding_series_ac") && !f.has("open_roles")) gaps.push("no funding/jobs found");
+  if (!f.has("targets_enterprise") && !f.has("named_enterprise_customers")) gaps.push("no enterprise signal");
+  if (!f.has("saas") || !f.has("b2b")) gaps.unshift("B2B SaaS not confirmed");
+  const score = c.score ?? 0;
+  return `${score}/100 (needs 75)${gaps.length ? ` · ${gaps.slice(0, 2).join(", ")}` : ""}`;
+}
 
 /** Two-to-three word reason for the results table; the full explanation is the tooltip. */
 function shortReason(c: Company): string {
@@ -374,7 +396,7 @@ export default function Dashboard() {
                         )}
                       </td>
                       <td className="c-status"><StatusBadge status={status} /></td>
-                      <td data-label="Why" className="c-why" data-empty={shortReason(c) === "—" || undefined} title={c.reason ?? undefined}>{shortReason(c)}</td>
+                      <td data-label="Why" className="c-why" data-empty={(whyLine(c, status) ?? shortReason(c)) === "—" || undefined} title={c.reason ?? undefined}>{whyLine(c, status) ?? shortReason(c)}</td>
                       <td data-label="Decision-maker" className="c-wide" data-empty={!c.contactName || undefined}>
                         {c.contactName ? (
                           <>

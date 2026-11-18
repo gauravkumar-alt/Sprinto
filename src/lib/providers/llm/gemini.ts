@@ -41,7 +41,11 @@ export class GeminiLLMProvider implements LLMProvider {
   /** Some models/endpoints reject a JSON schema; after the first rejection we fall back to plain JSON mode. */
   private schemaSupported = true;
 
-  constructor(private apiKey: string, private fetchImpl: typeof fetch = fetch) {
+  constructor(
+    private apiKey: string,
+    private fetchImpl: typeof fetch = fetch,
+    private overloadWaitsMs: number[] = [12_000, 30_000],
+  ) {
     this.model = this.cfg.model;
   }
 
@@ -60,6 +64,15 @@ export class GeminiLLMProvider implements LLMProvider {
       }
       if (res.status !== 503 && res.status !== 429 && res.status !== 599) break;
       cooldownUntil.set(model, Date.now() + (res.status === 429 ? RATE_LIMIT_COOLDOWN_MS : OVERLOAD_COOLDOWN_MS));
+    }
+    // Every model is out of quota or overloaded. A brief overload (503) usually clears within seconds:
+    // wait and retry the last model that was overloaded (not one that is out of quota) before giving up.
+    if (res.status === 503 || res.status === 599) {
+      for (const wait of this.overloadWaitsMs) {
+        await new Promise((r) => setTimeout(r, wait));
+        res = await this.call(req, this.schemaSupported, res.model);
+        if (res.status !== 503 && res.status !== 599) break;
+      }
     }
     return this.parse(res);
   }
