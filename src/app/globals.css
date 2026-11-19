@@ -389,3 +389,20 @@ td.c-why { min-width: 170px; max-width: 240px; font-size: 12.5px; line-height: 1
 .tabs .tab { position: relative; z-index: 1; }
 .tabs .tab.active { border-image: none; border-bottom-color: transparent; }
 @media (prefers-reduced-motion: reduce) { .tabs .tab.active { border-image: var(--accent-grad) 1; } .tabs > .glider { display: none; } }
+
+.pending-label { font-size: 12.5px; white-space: nowrap; }
+
+/* Approve / reject from the results list */
+.row-review { display: flex; gap: 6px; margin-top: 4px; flex-wrap: wrap; }
+.mini { height: 26px; padding: 0 10px; border-radius: 999px; font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; white-space: nowrap; border: 1px solid transparent; transition: background .2s, color .2s; }
+.mini-ok { background: var(--ok-bg); color: var(--ok); border-color: color-mix(in srgb, var(--ok) 35%, transparent); }
+.mini-ok:hover { background: var(--ok); color: #fff; }
+.mini-bad { background: var(--bad-bg); color: var(--bad); border-color: color-mix(in srgb, var(--bad) 35%, transparent); }
+.mini-bad:hover { background: var(--bad); color: #fff; }
+.overlay { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 16px; background: rgba(15, 18, 40, .28); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); }
+.dialog-wrap { width: min(520px, 100%); }
+.dialog { margin: 0; }
+.seg { display: inline-flex; padding: 3px; gap: 3px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--border); }
+.seg button { height: 30px; padding: 0 14px; border: 0; border-radius: 999px; background: transparent; font: inherit; font-size: 13px; font-weight: 650; color: var(--muted); cursor: pointer; }
+.seg button.on.ok { background: var(--ok); color: #fff; }
+.seg button.on.bad { background: var(--bad); color: #fff; }

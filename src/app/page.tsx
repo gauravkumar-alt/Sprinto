@@ -110,6 +110,7 @@ export default function Dashboard() {
   const [csv, setCsv] = useState<{ name: string; content: string } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [msg, setMsg] = useState<{ kind: "info" | "bad"; text: string } | null>(null);
+  const [review, setReview] = useState<{ c: Company; kind: "approve" | "reject" } | null>(null);
   const [activeBatch, setActiveBatch] = useState<number | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
   const resultsRef = useRef<HTMLElement>(null);
@@ -415,7 +416,7 @@ export default function Dashboard() {
                   <th>Why</th>
                   <th>Decision-maker</th>
                   <th>Pain points</th>
-                  <th>Email</th>
+                  <th>{data?.readOnly ? "Email" : "Email / your decision"}</th>
                 </tr>
               </thead>
               <tbody ref={rowsRef}>
@@ -479,7 +480,7 @@ export default function Dashboard() {
                             )}
                           </>
                         ) : (
-                          <span className="faint">—</span>
+                          <span className="faint pending-label">{notYet(c, status)}</span>
                         )}
                       </td>
                       <td data-label="Pain points" className="c-pain c-wide" data-empty={!c.painPoint1 || undefined} style={{ maxWidth: 280 }}>
@@ -489,12 +490,23 @@ export default function Dashboard() {
                             {c.painPoint2 && <div className="clamp1 sub" title={c.painPoint2}>2. {c.painPoint2}</div>}
                           </>
                         ) : (
-                          <span className="faint">—</span>
+                          <span className="faint pending-label">{notYet(c, status)}</span>
                         )}
                       </td>
-                      <td data-label="Email" data-empty={!c.emailStatus || undefined}>
-                        {sentEarlier(c) ? <span className="badge b-mute" title="Sent under an earlier scoring; this company no longer qualifies">Sent earlier</span> : <StatusBadge status={c.emailStatus} />}
-                      </td>
+                      {(() => {
+                        const canReview = !data?.readOnly && (c.decision ?? c.status) === "needs_review" && status !== "running" && status !== "queued";
+                        return (
+                          <td data-label={canReview ? "Your decision" : "Email"} data-empty={(!c.emailStatus && !canReview) || undefined}>
+                            {sentEarlier(c) ? <span className="badge b-mute" title="Sent under an earlier scoring; this company no longer qualifies">Sent earlier</span> : c.emailStatus ? <StatusBadge status={c.emailStatus} /> : !canReview && <span className="faint pending-label">{notYet(c, status)}</span>}
+                            {canReview && (
+                              <div className="row-review">
+                                <button className="mini mini-ok" onClick={(e) => { e.stopPropagation(); setReview({ c, kind: "approve" }); }} title="Approve: find the decision-maker and write the email (to your inbox only)">✓ Approve</button>
+                                <button className="mini mini-bad" onClick={(e) => { e.stopPropagation(); setReview({ c, kind: "reject" }); }} title="Reject: mark not qualified">✕ Reject</button>
+                              </div>
+                            )}
+                          </td>
+                        );
+                      })()}
                     </tr>
                   );
                 })}
@@ -510,8 +522,97 @@ export default function Dashboard() {
           <div className="empty">No companies yet.</div>
         )}
       </section>
+      {review && (
+        <ReviewDialog
+          company={review.c}
+          kind={review.kind}
+          onClose={() => setReview(null)}
+          onDone={(text) => {
+            setReview(null);
+            setMsg({ kind: "info", text });
+            setShowRun(true); // the run box shows the confirmation and progress
+            load();
+          }}
+        />
+      )}
     </Reveal>
   );
+}
+
+/** Approve or reject a "needs review" company from the results list, with a reason. */
+function ReviewDialog({ company, kind, onClose, onDone }: { company: Company; kind: "approve" | "reject"; onClose: () => void; onDone: (msg: string) => void }) {
+  const [mode, setMode] = useState(kind);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const name = company.name ?? company.domain;
+  const ok = mode === "reject" || note.trim().length >= 5;
+  useEffect(() => {
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", esc);
+    return () => window.removeEventListener("keydown", esc);
+  }, [onClose]);
+  async function submit() {
+    setBusy(true);
+    setErr(null);
+    try {
+      await postJson(`/api/companies/${company.id}/actions`, mode === "approve" ? { action: "approve", note: note.trim() } : { action: "reject", note: note.trim() || undefined });
+      onDone(mode === "approve" ? `${name} approved — finding the decision-maker and writing the email (sent only to your inbox).` : `${name} rejected — marked not qualified.`);
+    } catch (e) {
+      setErr((e as Error).message);
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="overlay" onClick={onClose} role="presentation">
+      <Pop className="dialog-wrap">
+        <div className="panel dialog" role="dialog" aria-modal="true" aria-label={`Review ${name}`} onClick={(e) => e.stopPropagation()}>
+          <div className="panel-head" style={{ marginBottom: 6 }}>
+            <h2>Review {name}</h2>
+            <button className="link-btn" onClick={onClose} aria-label="Close">✕</button>
+          </div>
+          <p className="sub" style={{ margin: "0 0 12px" }}>
+            {company.score !== null ? `${company.score}/100 · ` : ""}{company.reason ?? "The agent couldn't decide on its own."}
+          </p>
+          <div className="seg" role="radiogroup" aria-label="Decision">
+            <button role="radio" aria-checked={mode === "approve"} className={mode === "approve" ? "on ok" : ""} onClick={() => setMode("approve")}>✓ Approve</button>
+            <button role="radio" aria-checked={mode === "reject"} className={mode === "reject" ? "on bad" : ""} onClick={() => setMode("reject")}>✕ Reject</button>
+          </div>
+          <input
+            autoFocus
+            type="text"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && ok && !busy && submit()}
+            placeholder={mode === "approve" ? "Why it's a fit (needed), e.g. confirmed SaaS on its pricing page" : "Reason (optional)"}
+            aria-label="Reason"
+            style={{ width: "100%", marginTop: 12 }}
+          />
+          <p className="sub" style={{ margin: "8px 0 0" }}>
+            {mode === "approve" ? "The agent will find the decision-maker, write two pain points and the email. It is delivered only to your own inbox." : "The company is marked not qualified. Nothing further runs or is sent."}
+          </p>
+          {err && <div className="notice n-bad" style={{ marginTop: 10 }}>{err}</div>}
+          <div className="row" style={{ marginTop: 14, justifyContent: "flex-end" }}>
+            <button className="btn btn-sm" onClick={onClose}>Cancel</button>
+            <button className={`btn btn-sm ${mode === "approve" ? "btn-approve" : "btn-reject"}`} disabled={!ok || busy} onClick={submit}>
+              {busy ? "Saving…" : mode === "approve" ? "Approve" : "Reject"}
+            </button>
+          </div>
+        </div>
+      </Pop>
+    </div>
+  );
+}
+
+/** What an empty Decision-maker / Pain points / Email cell is waiting for. */
+function notYet(c: Company, status: string): string {
+  if (status === "running" || status === "queued") return "In progress…";
+  const d = c.decision ?? c.status;
+  if (d === "needs_review") return "After approval";
+  if (d === "not_qualified") return "Not a fit";
+  if (d === "qualified") return "Not found";
+  if (status === "failed") return "Run stopped";
+  return "—";
 }
 
 function Metric({ label, value, hint, pct, tone, on, onClick }: { label: string; value: number | undefined; hint?: string; pct: number; tone?: "ok" | "warn" | "bad"; on?: boolean; onClick: () => void }) {
