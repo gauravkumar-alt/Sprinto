@@ -16,6 +16,14 @@ async function reviewCompany() {
 }
 
 describe("human review: approve / reject", () => {
+  it("a draft for a company that isn't qualified can't be sent, even with Retry send", async () => {
+    useProviders();
+    const id = await reviewCompany();
+    const res = await act(id, { action: "retry_send" });
+    expect(res.status).toBe(400);
+    expect(getDb().prepare("SELECT COUNT(*) n FROM email_sends").get()).toEqual({ n: 0 });
+  });
+
   beforeEach(() => freshDb());
 
   it("reject marks the company not qualified with the reviewer's reason, and nothing is sent", async () => {
@@ -27,7 +35,7 @@ describe("human review: approve / reject", () => {
     expect(q.decision).toBe("not_qualified");
     expect(q.override_note).toBe("Rejected: Agency, not a product company");
     expect(q.explanation).toContain("Rejected by reviewer");
-    expect(getDb().prepare("SELECT COUNT(*) n FROM emails").get()).toEqual({ n: 0 });
+    expect(getDb().prepare("SELECT COUNT(*) n FROM email_sends").get()).toEqual({ n: 0 }); // drafted, never sent
     // Already decided: a second reject (or an approve) is refused.
     expect((await act(id, { action: "reject" })).status).toBe(400);
     expect((await act(id, { action: "approve", note: "changed my mind" })).status).toBe(400);

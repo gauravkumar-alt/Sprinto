@@ -97,6 +97,23 @@ export function checkPainPoints(
   return { ok: problems.length === 0, painPoints: cleaned.slice(0, 2), problems };
 }
 
+/** Checks role-based fallback pain points: exactly two, distinct, cautious, inferred, no numbers. */
+const HEDGE = /\b(may|might|often|typically|likely|could|can|tend to|usually|commonly)\b/i;
+export function checkRolePainPoints(raw: { insufficient_evidence: boolean; pain_points: PainPoint[] }, evidence: Map<string, { type: string; text: string }>): PainPointCheck {
+  const problems: string[] = [];
+  const known = new Set(evidence.keys());
+  const cleaned = raw.pain_points.slice(0, 2).map((p) => {
+    const refs = validRefs(p.evidence_ids, known);
+    if (!HEDGE.test(p.statement)) problems.push(`Role-based pain point is stated as fact: "${p.statement.slice(0, 60)}…"`);
+    const nums = unsupportedNumbers(p.statement, refs.map((r) => evidence.get(r)!.text));
+    if (nums.length) problems.push(`Pain point cites unsupported numbers: ${nums.join(", ")}`);
+    return { ...p, evidence_ids: refs, type: "inferred" as const, confidence: Math.min(0.5, Math.max(0, p.confidence > 1 ? p.confidence / 100 : p.confidence)) };
+  });
+  if (cleaned.length !== 2) problems.push(`Expected exactly 2 pain points, got ${cleaned.length}`);
+  if (cleaned.length === 2 && normalizeForMatch(cleaned[0].statement) === normalizeForMatch(cleaned[1].statement)) problems.push("The two pain points are identical");
+  return { ok: problems.length === 0, painPoints: cleaned, problems };
+}
+
 // ───────── email ─────────
 
 export const BANNED_PHRASES = [

@@ -46,16 +46,18 @@ describe("full pipeline with mock providers", () => {
     expect(send).toMatchObject({ delivery_recipient: "me@inbox.test", status: "simulated" });
   });
 
-  it("12. qualification gate: non-qualified companies never reach contact discovery", async () => {
+  it("12. sending gate: non-qualified companies get every detail as a draft, but nothing is sent", async () => {
     const contacts = new CountingContacts();
     useProviders({ contact: contacts });
     const a = run("northpeak-consulting.example");
     const b = run("orbitboard.example");
     expect(await processCompany(a.runId)).toBe("not_qualified");
     expect(await processCompany(b.runId)).toBe("not_qualified"); // SaaS, but no compliance signal on checked pages
-    expect(contacts.calls).toBe(0);
-    expect(stages(a.runId).contact).toBe("skipped");
-    expect(getDb().prepare("SELECT COUNT(*) n FROM emails").get()).toEqual({ n: 0 });
+    expect(contacts.calls).toBe(2); // decision-maker still looked up
+    expect(stages(b.runId)).toMatchObject({ qualify: "completed", contact: "completed", send: "skipped" });
+    expect(getDb().prepare("SELECT COUNT(*) n FROM email_sends").get()).toEqual({ n: 0 });
+    const company = getDb().prepare("SELECT current_status FROM companies WHERE id=?").get(b.companyId) as { current_status: string };
+    expect(company.current_status).toBe("not_qualified"); // drafting never changes the decision
   });
 
   it("homepage first, then targeted pages (ledgerly → borderline NEEDS_REVIEW)", async () => {
@@ -213,5 +215,8 @@ function realValidatedEmail() {
   const contactId = (db.prepare("SELECT id FROM contacts WHERE company_id=?").get(companyId) as { id: number }).id;
   const emailId = repo.insertEmail({ companyId, runId: repo.createSingleRun(companyId, null), contactId, subject: "s", body: "Hi Jane,", status: "validated", validationStatus: "PASS", validation: {}, attempts: 1, personalisation: {}, evidenceIds: [], dataSource: "real" });
   getDb().prepare("UPDATE companies SET name='Acme' WHERE id=?").run(companyId);
+  getDb()
+    .prepare("INSERT INTO qualifications (company_id, round, score, decision, result_json, reasons_json, missing_json, evidence_ids_json, confidence, created_at) VALUES (?, 0, 80, 'qualified', '{}', '[]', '[]', '[]', 0.9, ?)")
+    .run(companyId, new Date().toISOString());
   return { companyId, emailId };
 }

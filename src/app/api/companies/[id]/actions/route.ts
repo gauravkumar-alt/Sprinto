@@ -104,6 +104,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return NextResponse.json({ ok: true });
     }
     case "retry_send": {
+      // Drafts exist for every company, but only qualified (or reviewer-approved) ones may be sent.
+      if (repo.latestQualification(companyId)?.decision !== "qualified") {
+        return NextResponse.json({ error: "Only qualified or approved companies can be sent. Approve this company first." }, { status: 400 });
+      }
       const outcome = await retrySend(companyId, Boolean(a.confirmUnknownOutcome));
       return NextResponse.json({ ok: outcome !== "failed", outcome });
     }

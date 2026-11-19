@@ -6,8 +6,8 @@ Paste or upload company domains, click **Run Outreach Agent**, and watch each co
 
 ```
 domain → 1 research website → 2 extract structured profile → 3 qualify against Sprinto's ICP (+ bounded research loop)
-       → [gate: only Qualified continue] → 4 find the right decision-maker → 5 identify exactly two pain points
-       → 6 write + validate a personalised email → 7 send via Gmail to YOUR OWN inbox
+       → 4 find the right decision-maker → 5 identify exactly two pain points
+       → 6 write + validate a personalised email → 7 send via Gmail to YOUR OWN inbox (qualified or approved companies only)
 ```
 
 Every claim is tied to a stored piece of evidence (quote + source URL + retrieval time), labelled **observed fact**, **inference** or **unknown**. The dashboard answers the four defensibility questions for every company: *why qualify, why this person, why these pain points, why this email.*
@@ -199,7 +199,7 @@ Current result: **54/55 (98%)** — 43/44 certified companies caught, 11/12 sugg
 ### Accuracy eval (`npm run eval`)
 [`eval/qualification-cases.ts`](eval/qualification-cases.ts) holds 14 labelled fictional companies (`.example`, nothing real is contacted), each with the decision a careful analyst would reach. They include the traps that break keyword matching: "not yet SOC 2 certified", "not just compliant — certified", ISO held but SOC 2 planned, a compliance vendor that *helps others* get SOC 2, a B2C app, an agency, hardware, a borderline company and a prompt-injection page. The eval runs the real research and qualification prompts plus the deterministic rubric and reports per-case results (`data/eval-results.json`). Add a case whenever a live run gets something wrong.
 
-Coverage maps to the case's checklist: SaaS recognition, non-SaaS rejection, Series A–C, unknown stage, audit-only and enterprise-only qualification (OR logic), weak evidence downgrades, needs-review, deterministic scoring, research-loop maximum, qualification gate (no contact lookup for unqualified companies), contact ranking by stage, missing/invalid contacts, Hunter rate-limit/quota and caching, structured extraction, malformed-JSON retries, exactly-two evidence-backed pain points, email personalisation and validation, bounded regeneration (failed emails never sent), prospect name/company in body, recipient restricted to own inbox, prospect never in To/Cc/Bcc/body, Gmail auth failure, wrong Google account, duplicate prevention, failed and unknown-outcome sends, mock vs real send, SSRF, robots.txt, domain/CSV parsing and prompt-injection hygiene.
+Coverage maps to the case's checklist: SaaS recognition, non-SaaS rejection, Series A–C, unknown stage, audit-only and enterprise-only qualification (OR logic), weak evidence downgrades, needs-review, deterministic scoring, research-loop maximum, sending gate (every company gets a decision-maker, pain points and a drafted email; only qualified or approved companies are sent), contact ranking by stage, missing/invalid contacts, Hunter rate-limit/quota and caching, structured extraction, malformed-JSON retries, exactly-two evidence-backed pain points, email personalisation and validation, bounded regeneration (failed emails never sent), prospect name/company in body, recipient restricted to own inbox, prospect never in To/Cc/Bcc/body, Gmail auth failure, wrong Google account, duplicate prevention, failed and unknown-outcome sends, mock vs real send, SSRF, robots.txt, domain/CSV parsing and prompt-injection hygiene.
 
 ---
 
@@ -239,6 +239,9 @@ A permanent link that works even when your Mac is off. The agent still runs only
 4. In Vercel → Settings → Environment Variables add **only** `SUPABASE_URL` and `SUPABASE_ANON_KEY`, then redeploy.
 
 What gets published: the dashboard, research, evidence, qualification reports, contacts, pain points and drafted emails, with every email address partly masked (publishing refuses if a full address remains). Nothing is committed to GitHub.
+
+## Every company gets the full picture; only fit companies are sent
+Whatever its score, each company goes through all the steps: the decision-maker (Hunter), two pain points and a validated email draft. So a company you approve **or reject** still shows who to contact and what to say. **Sending is the only step gated by qualification.** A company's email goes to your inbox only when it qualifies (65+) or you approve it; otherwise the send step reads "Draft only". The check sits in the send function itself and in the Retry send action, and drafting never changes a company's status.
 
 ## Kill switch
 The dashboard's **Stop agent** button (top right) stops everything at once:

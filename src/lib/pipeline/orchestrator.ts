@@ -15,6 +15,7 @@ import {
   emailValidationPrompt,
   extractionPrompt,
   painPointPrompt,
+  rolePainPointPrompt,
   qualificationPrompt,
   researchPrompt,
   type EvidenceView,
@@ -42,7 +43,7 @@ import type {
   RoleCategory,
 } from "@/lib/schemas";
 import { clamp01, createLimiter, errorMessage, sha256, truncate } from "@/lib/util";
-import { checkEmail, checkPainPoints, quoteAppearsIn, validRefs } from "./checks";
+import { checkEmail, checkPainPoints, checkRolePainPoints, quoteAppearsIn, validRefs } from "./checks";
 import { classifyTitleByRules, companyScale, contactConfidence, rankContacts, selectionReason } from "./contactRanking";
 import { JOB_BOARD_HOSTS, decideQualification, finalizeUnresolved, researchTargets } from "./qualification";
 import { condensePages, pageType } from "./research";
@@ -590,6 +591,12 @@ export async function processCompany(runId: number, opts: ProcessOptions = {}): 
   repo.setCompanyStatus(run.company_id, "running");
 
   let outcome: CompanyOutcome = "failed";
+  /**
+   * Set when the company isn't qualified (needs review / not qualified): the agent still finds the
+   * decision-maker, writes the pain points and drafts the email, but never sends it, and the company
+   * keeps its qualification status. Sending happens only for qualified or reviewer-approved companies.
+   */
+  let draftOnly: CompanyOutcome | null = null;
   let current: PipelineStage = "research";
   let eventId = 0;
   // Every stage passes the kill switch first, so a stopped agent never starts new work.
@@ -646,12 +653,17 @@ export async function processCompany(runId: number, opts: ProcessOptions = {}): 
       if (q.decision !== "qualified") {
         if (opts.overrideNote && (q.decision !== "needs_review" || q.disqualification_reasons?.length))
           throw new StageStop((q.decision as CompanyOutcome) ?? "not_qualified", `Can't approve a company that is "${q.decision}" — only "needs review" can be approved.`);
-        if (!opts.overrideNote) throw new StageStop((q.decision as CompanyOutcome) ?? "needs_review", `Company is "${q.decision}"; only qualified companies proceed to contact discovery.`);
+        if (!opts.overrideNote) {
+          // Not qualified and not approved: fill in the details as a draft, without re-scoring and without sending.
+          draftOnly = q.decision === "not_qualified" ? "not_qualified" : "needs_review";
+        }
+      }
+      if (q.decision !== "qualified" && opts.overrideNote) {
         const overridden: QualificationResult = { ...q, decision: "qualified", explanation: `Manually approved after review: ${opts.overrideNote}. Original decision: ${q.decision} — ${q.explanation}` };
         repo.insertQualification(ctx.companyId, runId, 99, overridden, opts.overrideNote);
         ctx.qualification = overridden;
         repo.stageSkip(runId, "qualify", `Manually approved by reviewer (was ${q.decision}, ${q.fit_score}/100)`);
-      } else repo.stageSkip(runId, "qualify", `Reused: qualified · ${q.fit_score}/100`);
+      } else repo.stageSkip(runId, "qualify", `Reused: ${draftOnly ? (q.decision === "not_qualified" ? "not qualified" : "needs review") : "qualified"} · ${q.fit_score}/100`);
     } else {
       // ── 1. Research ──
       current = "research";
@@ -724,14 +736,8 @@ export async function processCompany(runId: number, opts: ProcessOptions = {}): 
       repo.stageEnd(eventId, result.decision === "qualified" ? "completed" : result.decision === "needs_review" ? "needs_review" : "completed", `${label} · ${result.fit_score}/100${loopNote}`, { rounds });
       eventId = 0;
 
-      // Qualification gate: only qualified companies continue.
-      if (result.decision !== "qualified") {
-        outcome = result.decision === "not_qualified" ? "not_qualified" : "needs_review";
-        skipRest("qualify", result.decision === "not_qualified" ? "Stopped: company did not qualify" : "Stopped: saved for human review");
-        repo.setCompanyStatus(ctx.companyId, outcome);
-        repo.finishRun(runId, "completed", outcome, startedMs);
-        return outcome;
-      }
+      // Sending gate: only qualified companies are sent. The others still get every detail, as a draft.
+      if (result.decision !== "qualified") draftOnly = result.decision === "not_qualified" ? "not_qualified" : "needs_review";
     }
 
     // ── 4. Contact ──
@@ -747,7 +753,7 @@ export async function processCompany(runId: number, opts: ProcessOptions = {}): 
     const mockData = mock.size > 0 || isMockDomain(ctx.domain);
     const key = idempotencyKey(ctx.domain, providerKind(deliveryProvider(P, mockData)));
     const prior = repo.getSendByKey(key);
-    if (prior && (prior.status === "sent" || prior.status === "simulated")) {
+    if (!draftOnly && prior && (prior.status === "sent" || prior.status === "simulated")) {
       outcome = prior.status === "sent" ? "email_sent" : "email_simulated";
       for (const s of ["pain_points", "email"] as const) repo.stageSkip(runId, s, "Reused: email already generated for this contact in this campaign");
       repo.stageSkip(runId, "send", `Duplicate prevented: already ${prior.status} on ${prior.completed_at?.slice(0, 16).replace("T", " ")} (id ${prior.gmail_message_id})`);
@@ -783,18 +789,27 @@ export async function processCompany(runId: number, opts: ProcessOptions = {}): 
     if (!pp.ok && !pp.problems.some((p) => p.startsWith("Model reported insufficient"))) {
       pp = checkPainPoints(await runPrompt(ctx.llm, painPointPrompt, ppInput, { agentRunId: runId }), known); // one bounded retry
     }
+    // Too little evidence for quote-backed pain points: fall back to cautious, role-based ones (always "inferred").
+    let roleBased = false;
+    if (!pp.ok) {
+      const fallback = checkRolePainPoints(await runPrompt(ctx.llm, rolePainPointPrompt, ppInput, { agentRunId: runId }), known);
+      if (fallback.ok) {
+        pp = fallback;
+        roleBased = true;
+      }
+    }
     if (!pp.ok) {
       repo.stageEnd(eventId, "needs_review", "Too little evidence for two pain points", { problems: pp.problems, draft: pp.painPoints });
       eventId = 0;
       skipRest("pain_points", "Stopped: pain points need human review");
-      outcome = "needs_review";
+      outcome = draftOnly ?? "needs_review";
       repo.setCompanyStatus(ctx.companyId, outcome);
       repo.finishRun(runId, "completed", outcome, startedMs);
       return outcome;
     }
     repo.insertPainPoints(ctx.companyId, runId, contact.id, pp.painPoints);
     const evidenced = pp.painPoints.filter((p) => p.type === "direct").length;
-    repo.stageEnd(eventId, "completed", `2 pain points · ${evidenced} evidenced, ${2 - evidenced} inferred`);
+    repo.stageEnd(eventId, "completed", roleBased ? "2 pain points · role-based (too few quotes on the site), marked inferred" : `2 pain points · ${evidenced} evidenced, ${2 - evidenced} inferred`);
 
     // ── 6. Email generation + validation ──
     current = "email";
@@ -826,7 +841,7 @@ export async function processCompany(runId: number, opts: ProcessOptions = {}): 
       repo.stageEnd(eventId, "needs_review", `Failed validation (${emailRes.history.length} tries) · not sent`, { history: emailRes.history });
       eventId = 0;
       repo.stageSkip(runId, "send", "Not sent: email failed validation");
-      outcome = "email_needs_review";
+      outcome = draftOnly ?? "email_needs_review";
       repo.setCompanyStatus(ctx.companyId, outcome);
       repo.finishRun(runId, "completed", outcome, startedMs);
       return outcome;
@@ -835,6 +850,13 @@ export async function processCompany(runId: number, opts: ProcessOptions = {}): 
 
     // ── 7. Send (own inbox only) ──
     current = "send";
+    if (draftOnly) {
+      repo.stageSkip(runId, "send", draftOnly === "needs_review" ? "Draft only — sent after you approve the company" : "Draft only — not sent: company did not qualify");
+      outcome = draftOnly;
+      repo.setCompanyStatus(ctx.companyId, outcome);
+      repo.finishRun(runId, "completed", outcome, startedMs);
+      return outcome;
+    }
     outcome = await sendEmail({ runId, companyId: ctx.companyId, emailId, key, P, mockData, prospectEmails: [contact.business_email] });
     repo.setCompanyStatus(ctx.companyId, outcome);
     repo.finishRun(runId, outcome === "failed" ? "failed" : "completed", outcome, startedMs);
@@ -848,6 +870,8 @@ export async function processCompany(runId: number, opts: ProcessOptions = {}): 
           ? err.message
           : String(err);
     outcome = stop ? stop.outcome : "failed";
+    // A problem while drafting (e.g. no contact found) doesn't change a decided company's status.
+    if (draftOnly) outcome = draftOnly;
     if (eventId) repo.stageEnd(eventId, stop && stop.outcome !== "failed" ? "needs_review" : "failed", truncate(msg, 300), undefined, msg);
     repo.appendRunError(runId, current, msg);
     skipRest(current, `Stopped at ${current}`);
@@ -931,6 +955,10 @@ export async function sendEmail(p: {
   confirmUnknownOutcome?: boolean;
 }): Promise<CompanyOutcome> {
   assertNotKilled();
+  // Every company gets a drafted email, but only a qualified (or reviewer-approved) one is ever sent.
+  if (repo.latestQualification(p.companyId)?.decision !== "qualified") {
+    throw new StageStop("needs_review", "Not sent: only qualified or approved companies are emailed. Approve the company first.");
+  }
   const db = getDb();
   const eventId = repo.stageStart(p.runId, "send", "Sending to your own inbox…");
   const stored = db.prepare("SELECT data_source FROM emails WHERE id=?").get(p.emailId) as { data_source: string };

@@ -607,12 +607,8 @@ function ReviewDialog({ company, kind, onClose, onDone }: { company: Company; ki
 /** What an empty Decision-maker / Pain points / Email cell is waiting for. */
 function notYet(c: Company, status: string): string {
   if (status === "running" || status === "queued") return "In progress…";
-  const d = c.decision ?? c.status;
-  if (d === "needs_review") return "After approval";
-  if (d === "not_qualified") return "Not a fit";
-  if (d === "qualified") return "Not found";
   if (status === "failed") return "Run stopped";
-  return "—";
+  return c.decision ? "Not found" : "—";
 }
 
 function Metric({ label, value, hint, pct, tone, on, onClick }: { label: string; value: number | undefined; hint?: string; pct: number; tone?: "ok" | "warn" | "bad"; on?: boolean; onClick: () => void }) {

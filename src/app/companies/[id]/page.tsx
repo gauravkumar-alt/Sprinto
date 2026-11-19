@@ -140,7 +140,7 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
           {!d.readOnly && (
             <>
               <button className="btn btn-sm" disabled={running} onClick={() => act({ action: "retry" }, "Re-running…")}>Re-run</button>
-              {email && ["failed", "validated"].includes(email.status) && (
+              {email && ["failed", "validated"].includes(email.status) && q?.decision === "qualified" && (
                 <button
                   className="btn btn-sm"
                   disabled={running}
@@ -177,13 +177,13 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
         <div>
           <div className="k">Decision-maker</div>
           <div className="v ellipsis">{selected?.name ?? "—"}</div>
-          <div className="s ellipsis">{selected ? `${selected.title}${earlier ? " · earlier run" : ""}` : q?.decision === "qualified" ? "Not found" : "Qualified companies only"}</div>
+          <div className="s ellipsis">{selected ? `${selected.title}${earlier ? " · earlier run" : ""}` : "Not found"}</div>
           {selected?.business_email && <div className="contact-email ellipsis" title="Found by Hunter — stored only, never emailed">{selected.business_email}{selected.verification_status === "valid" && <span className="verified">✓</span>}</div>}
         </div>
         <div>
           <div className="k">Pain points</div>
           <div className="v">{d.painPoints.length || "—"}</div>
-          <div className="s">{d.painPoints.length ? (d.painPoints.some((p: any) => p.type === "direct") ? `${d.painPoints.filter((p: any) => p.type === "direct").length} backed by quotes` : "From role and company profile") : "Qualified companies only"}</div>
+          <div className="s">{d.painPoints.length ? (d.painPoints.some((p: any) => p.type === "direct") ? `${d.painPoints.filter((p: any) => p.type === "direct").length} backed by quotes` : "From role and company profile") : "Not written yet"}</div>
         </div>
         <div>
           <div className="k">Sources</div>
@@ -222,7 +222,7 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
         <div className="stack">
           <div className="why-grid">
             <Why q={q?.decision === "qualified" ? "Why qualified" : q?.decision === "needs_review" ? "Why it needs review" : "Why not qualified"} a={q ? verdict(q) : "Not assessed yet."} full={q?.explanation} />
-            <Why q="Why this person" a={selected?.reason ?? (q?.decision === "qualified" ? "No reliable contact found." : "Only qualified companies get a contact.")} />
+            <Why q="Why this person" a={selected?.reason ?? "No reliable contact found yet."} />
             <Why q="Why these pain points" a={d.painPoints.length ? d.painPoints.map((p: any) => firstSentence(p.relevance)).join(" ") : "—"} full={d.painPoints.map((p: any) => p.relevance).join(" ")} />
             <Why q="Why this email" a={firstSentence(email?.personalisation?.personalisation_explanation) || "—"} full={email?.personalisation?.personalisation_explanation} />
           </div>
@@ -441,7 +441,7 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
               </dl>
             </>
           ) : (
-            <p className="sub" style={{ margin: 0 }}>{q?.decision === "qualified" ? "No reliable decision-maker found." : "Only qualified companies get a contact."}</p>
+            <p className="sub" style={{ margin: 0 }}>No reliable decision-maker found yet.</p>
           )}
           {others.length > 0 && (
             <details style={{ marginTop: 14 }}>

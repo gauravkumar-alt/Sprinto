@@ -19,7 +19,7 @@ const STATUS: Record<string, [string, string]> = {
   email_simulated: ["b-mock", "Simulated"],
   failed: ["b-bad", "Failed"],
   generated: ["b-info", "Generated"],
-  validated: ["b-info", "Validated"],
+  validated: ["b-info", "Draft ready"],
   sent: ["b-ok", "Sent"],
   simulated: ["b-mock", "Simulated"],
   skipped: ["b-mute", "Skipped"],

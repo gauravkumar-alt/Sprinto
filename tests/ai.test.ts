@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { checkEmail, checkPainPoints, quoteAppearsIn, unsupportedNumbers } from "@/lib/pipeline/checks";
+import { checkEmail, checkPainPoints, checkRolePainPoints, quoteAppearsIn, unsupportedNumbers } from "@/lib/pipeline/checks";
 import { extractionPrompt } from "@/lib/prompts";
 import { runPrompt } from "@/lib/providers/llm";
 import { LLMError } from "@/lib/providers/llm/types";
@@ -155,5 +155,20 @@ describe("email validation (deterministic)", () => {
 
   it("enforces length bounds", () => {
     expect(checkEmail(email({ body: "Hi Jane,\nAcme. Sprinto? Call?" }), ctx).issues.join()).toMatch(/length_ok/);
+  });
+});
+
+describe("role-based fallback pain points", () => {
+  const ev = new Map([["E1", { type: "observed", text: "Acme builds mobile apps without code" }]]);
+  const pp = (statement: string) => ({ statement, why_it_matters_to_this_person: "x", evidence_ids: ["E1", "E99"], type: "direct" as const, confidence: 0.9 });
+  it("accepts two cautious pain points and always marks them inferred", () => {
+    const r = checkRolePainPoints({ insufficient_evidence: false, pain_points: [pp("Security reviews may slow enterprise deals."), pp("Audit prep could take engineering time away from the product.")] }, ev);
+    expect(r.ok).toBe(true);
+    expect(r.painPoints.every((p) => p.type === "inferred" && p.confidence <= 0.5)).toBe(true);
+    expect(r.painPoints[0].evidence_ids).toEqual(["E1"]);
+  });
+  it("rejects statements of fact and invented numbers", () => {
+    expect(checkRolePainPoints({ insufficient_evidence: false, pain_points: [pp("Acme lost three deals to security reviews."), pp("Audits could take time.")] }, ev).ok).toBe(false);
+    expect(checkRolePainPoints({ insufficient_evidence: false, pain_points: [pp("Reviews may take 40 hours a month."), pp("Audits could take time.")] }, ev).ok).toBe(false);
   });
 });

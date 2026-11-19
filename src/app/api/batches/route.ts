@@ -10,7 +10,7 @@ import { isMockDomain, parseDomainCsv, parseDomainList } from "@/lib/security/do
 
 export const dynamic = "force-dynamic";
 
-const Body = z.object({ domains: z.string().max(20_000).optional(), csv: z.string().max(500_000).optional(), fresh: z.boolean().optional() });
+const Body = z.object({ domains: z.string().max(20_000).optional(), csv: z.string().max(500_000).optional(), fresh: z.boolean().optional(), detailsOnly: z.boolean().optional() });
 
 export async function POST(req: Request) {
   recoverOnce();
@@ -52,6 +52,7 @@ export async function POST(req: Request) {
   const companyIds = toRun.map((d) => repo.upsertCompany(d, isMockDomain(d) ? "mock" : "real", names.get(d)));
   const { batchId, runIds } = repo.createBatch(cfg.campaignId, cfg.mode, companyIds);
   // fresh: re-read websites and outside sources instead of reusing research from the last 72 hours.
-  runInBackground(runIds, { freshResearch: parsedBody.data.fresh === true });
+  // detailsOnly: keep each company's research and score; just fill in contact, pain points and email draft.
+  runInBackground(runIds, parsedBody.data.detailsOnly ? { startAt: "contact" } : { freshResearch: parsedBody.data.fresh === true });
   return NextResponse.json({ batchId, runIds, accepted: toRun, alreadyRunning, invalid, duplicates });
 }
