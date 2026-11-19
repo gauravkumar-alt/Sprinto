@@ -474,6 +474,8 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
                 const done = send && ["sent", "simulated"].includes(send.status);
                 const why = d.readOnly
                   ? "This shared copy is view-only. Send from your own copy of the app."
+                  : running
+                    ? `The agent is working on this company (${(d.run?.current_stage ?? "").replace("_", " ") || "starting"}). Sending unlocks when it finishes.`
                   : done
                   ? `Already sent to ${send.delivery_recipient ?? "your inbox"} on ${fmt(send.completed_at ?? send.attempted_at)}.`
                   : q?.decision === "needs_review"
