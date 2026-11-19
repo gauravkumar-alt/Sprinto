@@ -29,6 +29,7 @@ const Action = z.discriminatedUnion("action", [
     note: z.string().trim().max(300).optional(),
   }),
   z.object({ action: z.literal("approve"), note: z.string().trim().min(5).max(500) }),
+  z.object({ action: z.literal("reject"), note: z.string().trim().max(500).optional() }),
   z.object({ action: z.literal("resume") }),
   z.object({ action: z.literal("retry_send"), confirmUnknownOutcome: z.boolean().optional() }),
 ]);
@@ -76,6 +77,23 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         return NextResponse.json({ error: `Only companies marked "needs review" can be approved (this one is "${q?.decision ?? "not researched"}").` }, { status: 400 });
       }
       runInBackground([repo.createSingleRun(companyId, null)], { startAt: "contact", overrideNote: a.note });
+      return NextResponse.json({ ok: true });
+    }
+    case "reject": {
+      // A reviewer rejects a borderline company: recorded as not qualified, nothing further runs or is sent.
+      const q = repo.latestQualification(companyId);
+      if (q?.decision !== "needs_review") {
+        return NextResponse.json({ error: `Only companies marked "needs review" can be rejected (this one is "${q?.decision ?? "not researched"}").` }, { status: 400 });
+      }
+      const note = a.note?.trim() || "no reason given";
+      const runId = repo.createSingleRun(companyId, null);
+      const started = Date.now();
+      repo.startRun(runId, {});
+      const rest: Partial<typeof q> = { ...q };
+      delete rest.override_note; // stored in its own column
+      repo.insertQualification(companyId, runId, 99, { ...(rest as typeof q), decision: "not_qualified", explanation: `Rejected by reviewer: ${note}. Original decision: needs review — ${q.explanation}` }, `Rejected: ${note}`);
+      repo.setCompanyStatus(companyId, "not_qualified");
+      repo.finishRun(runId, "completed", "not_qualified", started);
       return NextResponse.json({ ok: true });
     }
     case "resume": {

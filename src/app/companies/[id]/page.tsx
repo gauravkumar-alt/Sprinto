@@ -29,7 +29,7 @@ const TRIGGER: Record<string, string> = {
 
 /** One-line verdict built from the stored classification (consistent for old and new runs). */
 function verdict(q: QualificationResult & { override_note?: string }): string {
-  if (q.override_note) return `Approved by reviewer: ${q.override_note}`;
+  if (q.override_note) return q.override_note.startsWith("Rejected:") ? `Rejected by reviewer: ${q.override_note.slice(9).trim()}` : `Approved by reviewer: ${q.override_note}`;
   if (q.categories) return q.explanation; // new rubric: already a one-line, evidence-based verdict
   const triggers = [TRIGGER[q.audit_trigger], TRIGGER[q.enterprise_pressure]].filter(Boolean);
   if (q.decision === "qualified") return `SaaS company ${triggers.join(" and ")}.`;
@@ -157,6 +157,13 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
       {isMock && <div className="notice n-mock" style={{ marginBottom: 12 }}>Fictional demo company — not real research.</div>}
       {actionMsg && <div className={`notice ${actionMsg.kind === "bad" ? "n-bad" : "n-info"}`} style={{ marginBottom: 12 }}>{actionMsg.text}</div>}
 
+      {q?.decision === "needs_review" && !running && !d.readOnly && (
+        <ReviewBox
+          onApprove={(note) => act({ action: "approve", note }, "Approved — finding the decision-maker and writing the email (sent only to your inbox)…")}
+          onReject={(note) => act({ action: "reject", note }, "Rejected — marked not qualified. Nothing will be sent.")}
+        />
+      )}
+
       {/* Result banner: the whole story in one line */}
       <div className="hero" data-reveal>
         <div>
@@ -210,7 +217,7 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
       {tab === "overview" && (
         <div className="stack">
           <div className="why-grid">
-            <Why q={q?.decision === "qualified" ? "Why qualified" : "Why not qualified"} a={q ? verdict(q) : "Not assessed yet."} full={q?.explanation} />
+            <Why q={q?.decision === "qualified" ? "Why qualified" : q?.decision === "needs_review" ? "Why it needs review" : "Why not qualified"} a={q ? verdict(q) : "Not assessed yet."} full={q?.explanation} />
             <Why q="Why this person" a={selected?.reason ?? (q?.decision === "qualified" ? "No reliable contact found." : "Only qualified companies get a contact.")} />
             <Why q="Why these pain points" a={d.painPoints.length ? d.painPoints.map((p: any) => firstSentence(p.relevance)).join(" ") : "—"} full={d.painPoints.map((p: any) => p.relevance).join(" ")} />
             <Why q="Why this email" a={firstSentence(email?.personalisation?.personalisation_explanation) || "—"} full={email?.personalisation?.personalisation_explanation} />
@@ -246,7 +253,7 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
                 </div>
               </div>
               <p style={{ margin: 0 }} title={q.explanation}>{verdict(q)}</p>
-              {q.override_note && <div className="notice n-warn" style={{ marginTop: 10 }}>Approved by reviewer: {q.override_note}</div>}
+              {q.override_note && <div className="notice n-warn" style={{ marginTop: 10 }}>{verdict(q)}</div>}
               {(q.disqualification_reasons?.length ?? 0) > 0 && (
                 <div className="notice n-bad" style={{ marginTop: 10 }}>
                   {q.flags?.includes("ALREADY_CERTIFIED") && <b>ALREADY_CERTIFIED · </b>}
@@ -330,7 +337,6 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
                   ))}
                 </details>
               )}
-              {q.decision === "needs_review" && !running && !d.readOnly && <ApproveForm onSubmit={(note) => act({ action: "approve", note }, "Approved — finding a contact…")} />}
             </>
           ) : (
             <p className="sub" style={{ margin: 0 }}>Not assessed yet.</p>
@@ -552,16 +558,34 @@ function Signals({ s, onRef }: { s: { summary: string; evidence_ids: string[] }[
   return <ul className="list-tight" style={{ marginTop: 0 }}>{s.map((x, i) => <li key={i}>{x.summary} <Refs ids={x.evidence_ids} onClick={onRef} /></li>)}</ul>;
 }
 
-function ApproveForm({ onSubmit }: { onSubmit: (note: string) => void }) {
+/** Human decision for a "needs review" company: approve (continue to contact + email) or reject. */
+function ReviewBox({ onApprove, onReject }: { onApprove: (note: string) => void; onReject: (note: string) => void }) {
   const [note, setNote] = useState("");
+  const ok = note.trim().length >= 5;
   return (
-    <div className="why" style={{ marginTop: 16 }}>
-      <div className="q">Approve manually</div>
-      <div className="row">
-        <input type="text" placeholder="Why it qualifies (e.g. confirmed SOC 2 need on a call)" value={note} onChange={(e) => setNote(e.target.value)} style={{ flex: 1, minWidth: 220 }} />
-        <button className="btn btn-sm" disabled={note.trim().length < 5} onClick={() => onSubmit(note)}>Approve</button>
+    <section className="panel review-box" data-reveal>
+      <div>
+        <h2>Your decision</h2>
+        <p className="sub" style={{ margin: "4px 0 0" }}>
+          The agent couldn&apos;t decide on its own. Approve to find the decision-maker and write the email (delivered only to your inbox), or reject to close it.
+        </p>
       </div>
-    </div>
+      <div className="row review-actions">
+        <input
+          type="text"
+          placeholder="Reason (needed to approve, e.g. confirmed SaaS on its pricing page)"
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          aria-label="Reason for your decision"
+        />
+        <button className="btn btn-approve" disabled={!ok} title={ok ? "Approve and continue" : "Write a reason (5+ characters) to approve"} onClick={() => onApprove(note.trim())}>
+          ✓ Approve
+        </button>
+        <button className="btn btn-reject" onClick={() => onReject(note.trim())}>
+          ✕ Reject
+        </button>
+      </div>
+    </section>
   );
 }
 
