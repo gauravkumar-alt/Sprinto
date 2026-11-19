@@ -85,8 +85,8 @@ The model only **reports findings** per criterion (with evidence ids); code vali
 | **Business model fit (30)** | Sells software as SaaS | 15 |
 | | Serves business customers (B2B) | 10 |
 | | Identifiable software product | 5 |
-| **Growth stage (25)** | Series A, B or C funding | 15 |
-| | 5+ open job positions | 5 |
+| **Growth stage (25)** | Venture funding: Seed to Series C, or YC / venture backing | 15 |
+| | 3+ open job positions | 5 |
 | | Enterprise pricing or plan | 5 |
 | **Compliance buying signals (35)** | Preparing for SOC 2 / ISO 27001 / similar | 20 |
 | | Hiring security / compliance / GRC roles | 10 |
@@ -96,9 +96,9 @@ The model only **reports findings** per criterion (with evidence ids); code vali
 
 Every criterion is stored with: name, max points, points awarded, evidence text, source URL, confidence and a status — **FOUND**, **NOT_FOUND** (a page that could answer it was checked), or **UNKNOWN** (no such page could be checked).
 
-**Disqualification rules (applied first, override the score):** not SaaS → NOT_QUALIFIED · primarily B2C → NOT_QUALIFIED · an existing named certification (SOC 2, ISO 27001 …) → flag **ALREADY_CERTIFIED** and NOT_QUALIFIED (set `ALREADY_CERTIFIED_QUALIFIES=true` to score them instead) · business model can't be established → NEEDS_REVIEW. Missing information is never treated as unsuitable, and no points are awarded on assumptions (e.g. "Series B" must literally appear; "preparing for SOC 2" needs a framework *and* a preparing word; a planned certification is not a held one).
+**Disqualification rules (applied first, override the score):** not SaaS → NOT_QUALIFIED · primarily B2C → NOT_QUALIFIED · an existing named certification (SOC 2, ISO 27001 …) → flag **ALREADY_CERTIFIED** and NOT_QUALIFIED (set `ALREADY_CERTIFIED_QUALIFIES=true` to score them instead) · business model can't be established → NEEDS_REVIEW. Missing information is never treated as unsuitable, and no points are awarded on assumptions (e.g. "Series B" or "seed round" must literally appear; "preparing for SOC 2" needs a framework *and* a preparing word; a planned certification is not a held one).
 
-**Thresholds (`QUALIFY_THRESHOLD`, `REVIEW_THRESHOLD`):** 75–100 QUALIFIED → contact discovery, pain points, email · 55–74 NEEDS_REVIEW (fetch more pages if budget allows, else human review) · below 55 NOT_QUALIFIED. Qualification also requires confirmed SaaS **and** B2B.
+**Thresholds (`QUALIFY_THRESHOLD`, `REVIEW_THRESHOLD`):** 65–100 QUALIFIED → contact discovery, pain points, email · 45–64 NEEDS_REVIEW (fetch more pages if budget allows, else human review) · below 45 NOT_QUALIFIED. (Loosened on 2026-11-19 from 75 / 55, Series A–C only and 5+ open roles: almost no real uncertified startup could reach 75, and seed-stage companies are often the ones starting SOC 2.) Qualification also requires confirmed SaaS **and** B2B.
 
 **Output:** `GET /api/companies/<id>/qualification` returns the required JSON (company_name, domain, business_description, total_score, qualification_status, the four category objects with their evidence, existing_certifications, disqualification_reasons, missing_information, pages_scraped, research_summary, recommended_next_action). The company page's Qualification tab shows the same breakdown with source links, and the dashboard filters by status.
 
@@ -239,6 +239,18 @@ A permanent link that works even when your Mac is off. The agent still runs only
 4. In Vercel → Settings → Environment Variables add **only** `SUPABASE_URL` and `SUPABASE_ANON_KEY`, then redeploy.
 
 What gets published: the dashboard, research, evidence, qualification reports, contacts, pain points and drafted emails, with every email address partly masked (publishing refuses if a full address remains). Nothing is committed to GitHub.
+
+## Kill switch
+The dashboard's **Stop agent** button (top right) stops everything at once:
+- Queued companies are cancelled immediately.
+- A running company stops at its next checkpoint: the next stage, AI call or research round.
+- **No email can be sent.** The send step checks the switch right before calling Gmail.
+- New batches, retries, sends and "Find fit companies" screens are refused until you click **Resume** on the red banner.
+
+The setting is saved in the database, so it survives restarts. `AGENT_KILL_SWITCH=true` in `.env.local` forces it on; that can't be undone from the dashboard. API: `POST /api/kill-switch {"on": true|false}` (localhost only).
+
+## Sources per company
+Each company is researched from **at most 5 sources** (`RESEARCH_MAX_SOURCES`): the homepage, up to 2 outside sources (YC directory listing, job board, then news/Hacker News/search), and the rest from the company's own most relevant pages (security, pricing, careers…). The dashboard's "N checked" counts only sources actually read. An outside article counts only if its headline names the company or its text mentions the company's domain.
 
 ## Security hardening (local app)
 - The server binds to `127.0.0.1` only (`npm run dev` / `npm start`).

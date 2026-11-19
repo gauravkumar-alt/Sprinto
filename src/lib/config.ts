@@ -63,6 +63,8 @@ export function getConfig() {
       maxAdditionalPages: num("RESEARCH_MAX_ADDITIONAL_PAGES", 4),
       maxPagesPerRound: num("RESEARCH_MAX_PAGES_PER_ROUND", 2),
       maxExternalSources: num("RESEARCH_MAX_EXTERNAL_SOURCES", 5), // news, job boards, compliance mentions
+      /** Hard cap on sources read per company: website pages + outside sources together (homepage included). */
+      maxSourcesPerCompany: num("RESEARCH_MAX_SOURCES", 5),
       maxAdditionalRounds: num("RESEARCH_MAX_ROUNDS", 3),
       /** Cleaned content sent to the model per research pass (~2,000 tokens). */
       contextBudgetChars: num("RESEARCH_CONTEXT_CHARS", 8000),
@@ -130,8 +132,8 @@ export const RUBRIC = {
   growth_stage: {
     label: "Growth stage",
     criteria: {
-      funding_series_ac: { label: "Series A, B or C funding", points: 15, pages: ["funding/news", "about"] },
-      open_roles: { label: "5+ open job positions", points: 5, pages: ["hiring"] },
+      funding_series_ac: { label: "Venture funding (Seed to Series C)", points: 15, pages: ["funding/news", "about"] },
+      open_roles: { label: "3+ open job positions", points: 5, pages: ["hiring"] },
       enterprise_pricing: { label: "Enterprise pricing or plan", points: 5, pages: ["pricing", "enterprise"] },
     },
   },
@@ -164,7 +166,7 @@ export const CRITERIA: { id: CriterionId; category: RubricCategory; label: strin
 );
 
 /** Minimum open roles for the "growth" hiring criterion. */
-export const OPEN_ROLES_THRESHOLD = 5;
+export const OPEN_ROLES_THRESHOLD = 3;
 
 /** Qualification thresholds (configurable). A high score never overrides a disqualification or a missing SaaS/B2B requirement. */
 export function getThresholds() {
@@ -172,7 +174,7 @@ export function getThresholds() {
     const v = Number(process.env[k]);
     return Number.isFinite(v) && v > 0 ? v : d;
   };
-  return { qualified: n("QUALIFY_THRESHOLD", 75), needsReview: n("REVIEW_THRESHOLD", 55) };
+  return { qualified: n("QUALIFY_THRESHOLD", 65), needsReview: n("REVIEW_THRESHOLD", 45) };
 }
 
 /**

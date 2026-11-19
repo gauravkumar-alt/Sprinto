@@ -12,6 +12,7 @@
  */
 import { getConfig } from "@/lib/config";
 import { getDb, nowIso } from "@/lib/db";
+import { killSwitchOn } from "@/lib/kill-switch";
 import { CERT_RE, PREP_RE, showsCertificationHeld } from "@/lib/pipeline/qualification";
 import { scoreUrl } from "@/lib/providers/research/prioritize";
 import type { FetchedPage, ResearchProvider } from "@/lib/providers/research/types";
@@ -219,6 +220,7 @@ export function startDiscovery(
       await Promise.all(
         candidates.map((c) =>
           limitRun(async () => {
+            if (killSwitchOn()) return; // stopped: don't contact any more sites
             const r = await screen(c.domain, research);
             insert.run(c.domain, c.name, c.source, r.verdict, r.reason, r.quote, r.quoteUrl, JSON.stringify(c.details), nowIso());
             st.screened++;

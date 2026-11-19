@@ -116,3 +116,65 @@ export async function hackerNewsUrls(name: string, domain: string, fetchImpl: Fe
     .filter((h) => !new URL(h.url!).hostname.endsWith(domain))
     .map((h) => ({ url: h.url!, title: h.title ?? "" }));
 }
+
+/** Public YC company directory (yc-oss JSON mirror of ycombinator.com/companies), cached for a day. */
+export const YC_ALL_URL = "https://yc-oss.github.io/api/companies/all.json";
+interface YcEntry {
+  name: string;
+  slug?: string;
+  website?: string | null;
+  one_liner?: string | null;
+  batch?: string | null;
+  status?: string | null;
+  team_size?: number | null;
+  stage?: string | null;
+  isHiring?: boolean | null;
+  url?: string | null;
+}
+let ycCache: { at: number; list: YcEntry[] } | null = null;
+export function resetYcCache() {
+  ycCache = null;
+}
+
+/**
+ * The company's YC directory listing, as an outside source: YC invests in every company it lists, so a
+ * listing is public evidence of venture backing. Matched on the website's domain only (never the name).
+ */
+export async function ycDirectoryPage(domain: string, fetchImpl: Fetch = (url) => defaultFetchLarge(url)): Promise<FetchedPage | null> {
+  if (!ycCache || Date.now() - ycCache.at > 24 * 3_600_000) {
+    const r = await fetchImpl(YC_ALL_URL);
+    const list = r.status === 200 ? parse<YcEntry[]>(r.body) : null;
+    if (!Array.isArray(list)) return null;
+    ycCache = { at: Date.now(), list };
+  }
+  const host = (w: string | null | undefined) => {
+    try {
+      return new URL(w ?? "").hostname.toLowerCase().replace(/^www\./, "");
+    } catch {
+      return "";
+    }
+  };
+  const c = ycCache.list.find((x) => host(x.website) === domain.toLowerCase());
+  if (!c || !c.batch) return null;
+  const facts = [
+    `${c.name} is backed by Y Combinator (batch: ${c.batch}).`,
+    c.one_liner ? `${c.name}: ${c.one_liner}.` : "",
+    c.status ? `Status: ${c.status}.` : "",
+    c.team_size ? `Team size: ${c.team_size}.` : "",
+    c.isHiring ? `${c.name} is currently hiring.` : "",
+  ].filter(Boolean);
+  return {
+    url: c.url ?? `https://www.ycombinator.com/companies/${c.slug ?? ""}`,
+    title: `${c.name} — Y Combinator company directory`,
+    text: facts.join("\n"),
+    publishedAt: null,
+    retrievedAt: new Date().toISOString(),
+    sourceType: "search_result",
+  };
+}
+
+const defaultFetchLarge: Fetch = async (url) => {
+  const cfg = getConfig().research;
+  const r = await safeFetch(url, { timeoutMs: 45_000, maxRedirects: 2, maxBytes: 30_000_000, userAgent: cfg.userAgent, accept: "application/json" });
+  return { status: r.status, body: r.body };
+};

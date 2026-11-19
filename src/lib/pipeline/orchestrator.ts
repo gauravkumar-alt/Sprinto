@@ -46,9 +46,10 @@ import { checkEmail, checkPainPoints, quoteAppearsIn, validRefs } from "./checks
 import { classifyTitleByRules, companyScale, contactConfidence, rankContacts, selectionReason } from "./contactRanking";
 import { JOB_BOARD_HOSTS, decideQualification, finalizeUnresolved, researchTargets } from "./qualification";
 import { condensePages, pageType } from "./research";
+import { assertNotKilled } from "@/lib/kill-switch";
 import { agentBusyMessage, agentLockHolder } from "@/lib/agent-lock";
 import { publishAfterRun } from "@/lib/showroom-publish";
-import { findJobBoard, hackerNewsUrls, newsUrls } from "@/lib/providers/research/free-sources";
+import { findJobBoard, hackerNewsUrls, newsUrls, ycDirectoryPage } from "@/lib/providers/research/free-sources";
 
 /** Thrown to end a company's pipeline early with a recorded outcome (not a crash). */
 class StageStop extends Error {
@@ -76,6 +77,8 @@ interface Ctx {
   checkedPages: Set<string>;
   pagesScraped: string[];
   additionalFetched: number;
+  /** Outside sources stored (news, job board, YC listing); counts toward the per-company source cap. */
+  externalUsed: number;
   /** Every URL looked at during research (read, blocked by robots.txt, empty, off-topic or failed). */
   looked: Set<string>;
 }
@@ -321,14 +324,18 @@ function externalQueries(ctx: Ctx): string[] {
  * fetched (robots.txt, SSRF checks) and quoted verbatim, and its text is stored as third-party evidence.
  */
 async function gatherExternalSources(ctx: Ctx): Promise<FetchedPage[]> {
-  const cap = getConfig().research.maxExternalSources;
+  const rcfg = getConfig().research;
+  // Within the per-company cap (default 5): the homepage, up to 2 outside sources, the rest the company's own pages.
+  const cap = Math.min(rcfg.maxExternalSources, Math.max(0, rcfg.maxSourcesPerCompany - 3));
   if (cap <= 0 || isMockDomain(ctx.domain)) return [];
   const name = ctx.nameHint || ctx.profile?.company_name || null;
   const nameRoot = ctx.domain.split(".")[0].toLowerCase();
   const picked: FetchedPage[] = [];
   const perHost = new Map<string, number>();
   const take = (p: FetchedPage, host: string) => {
+    if (picked.length >= cap) return;
     picked.push(p);
+    ctx.looked.add(p.url);
     perHost.set(host, (perHost.get(host) ?? 0) + 1);
     ctx.checkedPages.add(JOB_BOARD_HOSTS.test(host) ? "hiring" : "funding/news");
   };
@@ -336,7 +343,10 @@ async function gatherExternalSources(ctx: Ctx): Promise<FetchedPage[]> {
   // 1. The company's job board (official public posting APIs: Greenhouse, Lever, Ashby).
   const board = await findJobBoard(name, ctx.domain, ctx.session?.jobBoardLinks?.() ?? []).catch(() => null);
   if (board) take(board, new URL(board.url).hostname);
-  for (const ats of ["Greenhouse", "Lever", "Ashby"]) ctx.looked.add(`${ats} job board for ${ctx.domain}`);
+
+  // 1b. The YC company directory: a listing is public evidence of venture backing (matched on the domain).
+  const yc = await ycDirectoryPage(ctx.domain).catch(() => null);
+  if (yc) take(yc, "yc company directory"); // not a job board: says nothing about the number of open roles
 
   // 2. Article URLs: web search (when configured), GDELT news, Hacker News — all fetched and quoted verbatim.
   const candidates: { url: string; title: string; snippet?: string; publishedAt?: string | null }[] = [];
@@ -364,7 +374,6 @@ async function gatherExternalSources(ctx: Ctx): Promise<FetchedPage[]> {
     // Outside sources only (the company's own pages come from the crawler), at most 2 per site, no duplicates.
     const host = u.hostname.replace(/^www\./, "");
     if (sameSite(u, ctx.domain) || picked.some((p) => p.url === r.url) || (perHost.get(host) ?? 0) >= 2) continue;
-    ctx.looked.add(r.url);
     let fetched: FetchedPage[];
     if ((r.snippet ?? "").length >= 40) {
       fetched = [{ url: r.url, title: r.title, text: r.snippet!, publishedAt: r.publishedAt ?? null, retrievedAt: new Date().toISOString(), sourceType: "search_result" }];
@@ -372,9 +381,13 @@ async function gatherExternalSources(ctx: Ctx): Promise<FetchedPage[]> {
       const got = await ctx.P.research.startSession(host).fetchUrls([r.url], 1).catch(() => ({ pages: [] as FetchedPage[] }));
       fetched = got.pages.map((p) => ({ ...p, sourceType: "search_result" as const }));
     }
-    for (const p of fetched) if (`${p.url} ${p.title} ${p.text}`.toLowerCase().includes(nameRoot)) take(p, host); // must be about this company
+    // Must be about this company: its domain in the text, or its name as a whole word in the headline.
+    // (A name match anywhere in the body isn't enough: "Twenty" matched an unrelated Disney article.)
+    const titleRe = new RegExp(`(^|[^a-z0-9])${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9]|$)`, "i");
+    for (const p of fetched) if (p.text.toLowerCase().includes(ctx.domain.toLowerCase()) || titleRe.test(`${p.title} ${r.title}`)) take(p, host);
   }
   if (!picked.length) return [];
+  ctx.externalUsed = Math.min(picked.length, cap);
   const { added } = await storePagesAndCollectEvidence(ctx, picked.slice(0, cap), 0, ["funding", "open roles", "security and compliance"]);
   if (added.length) ctx.evidence = [...ctx.evidence, ...added];
   return picked.slice(0, cap);
@@ -387,7 +400,9 @@ async function gatherExternalSources(ctx: Ctx): Promise<FetchedPage[]> {
  */
 async function qualifyWithResearchLoop(ctx: Ctx, eventId: number) {
   const cfg = getConfig().research;
-  const canFetch = () => Boolean(ctx.session) && !ctx.reusedResearch && ctx.additionalFetched < cfg.maxAdditionalPages;
+  // Own pages beyond the homepage: limited per round, overall, and by the per-company source cap.
+  const siteBudget = () => Math.min(cfg.maxAdditionalPages, cfg.maxSourcesPerCompany - 1 - ctx.externalUsed) - ctx.additionalFetched;
+  const canFetch = () => Boolean(ctx.session) && !ctx.reusedResearch && siteBudget() > 0;
   const rounds: LoopRound[] = [];
   let round = 0;
   // Outside sources first (news, job boards, compliance mentions) so the first decision already sees them.
@@ -401,6 +416,7 @@ async function qualifyWithResearchLoop(ctx: Ctx, eventId: number) {
   repo.insertQualification(ctx.companyId, ctx.runId, round, result);
 
   while (result.decision === "research_more" && canFetch() && round < cfg.maxAdditionalRounds) {
+    assertNotKilled();
     round++;
     const wanted = researchTargets(result, ctx.checkedPages);
     repo.stageEnd(eventId, "completed", `Checking ${wanted.slice(0, 3).join(", ") || "more pages"}…`);
@@ -418,7 +434,7 @@ async function qualifyWithResearchLoop(ctx: Ctx, eventId: number) {
     };
 
     // One best candidate URL per wanted page type, taken from links the site actually has (or common paths).
-    const budget = Math.min(cfg.maxPagesPerRound, cfg.maxAdditionalPages - ctx.additionalFetched);
+    const budget = Math.min(cfg.maxPagesPerRound, siteBudget());
     const candidates = ctx.session!.unvisitedCandidates(80);
     const pages: FetchedPage[] = [];
     for (const tag of wanted) {
@@ -428,8 +444,8 @@ async function qualifyWithResearchLoop(ctx: Ctx, eventId: number) {
       for (const opt of options) {
         const r = await ctx.session!.fetchUrls([opt.url], 1);
         rec.action.urls.push(opt.url);
-        ctx.looked.add(opt.url);
         if (r.pages.length) {
+          ctx.looked.add(opt.url);
           pages.push(...r.pages);
           ctx.additionalFetched++;
           got = true;
@@ -558,6 +574,7 @@ const providerKind = (e: EmailProvider | null): "gmail" | "mock" => (e?.dataSour
 export async function processCompany(runId: number, opts: ProcessOptions = {}): Promise<CompanyOutcome> {
   const run = repo.getRun(runId);
   if (!run) throw new Error(`Run ${runId} not found`);
+  if (run.status !== "queued" && run.status !== "running") return "failed"; // cancelled (e.g. by the kill switch) before it started
   const startedMs = Date.now();
   const P = getProvidersFor(run.domain);
   const mock = new Set<string>();
@@ -575,13 +592,18 @@ export async function processCompany(runId: number, opts: ProcessOptions = {}): 
   let outcome: CompanyOutcome = "failed";
   let current: PipelineStage = "research";
   let eventId = 0;
+  // Every stage passes the kill switch first, so a stopped agent never starts new work.
+  const startStage = (stage: PipelineStage, detail?: string) => {
+    assertNotKilled();
+    return repo.stageStart(runId, stage, detail);
+  };
   const skipRest = (from: PipelineStage, why: string) => {
     for (const s of PIPELINE_STAGES.slice(PIPELINE_STAGES.indexOf(from) + 1)) repo.stageSkip(runId, s, why);
   };
 
   try {
     if (!P.llm) {
-      eventId = repo.stageStart(runId, "research");
+      eventId = startStage( "research");
       throw new StageStop("failed", P.unavailable.llm!);
     }
     const nameHint = (getDb().prepare("SELECT name FROM companies WHERE id=?").get(run.company_id) as { name: string | null }).name;
@@ -599,6 +621,7 @@ export async function processCompany(runId: number, opts: ProcessOptions = {}): 
       checkedPages: new Set(),
       pagesScraped: [],
       additionalFetched: 0,
+      externalUsed: 0,
       looked: new Set(),
     };
 
@@ -632,7 +655,7 @@ export async function processCompany(runId: number, opts: ProcessOptions = {}): 
     } else {
       // ── 1. Research ──
       current = "research";
-      eventId = repo.stageStart(runId, "research", "Crawling public website…");
+      eventId = startStage( "research", "Crawling public website…");
       const cfg = getConfig().research;
       const cached = repo.latestResearchRun(ctx.companyId);
       const cacheFresh = cached && Date.now() - Date.parse(cached.completed_at) < cfg.cacheHours * 3_600_000 && cached.data_source === (mock.size ? "mock" : "real");
@@ -651,7 +674,7 @@ export async function processCompany(runId: number, opts: ProcessOptions = {}): 
         ctx.session = P.research.startSession(run.domain);
         // One initial request: the homepage. Further pages are fetched only when evidence is missing.
         const crawl = await ctx.session.initialCrawl(1);
-        for (const l of crawl.log) ctx.looked.add(l.url);
+        for (const p of crawl.pages) ctx.looked.add(p.url); // sources = pages actually read
         if (!crawl.reachable) {
           repo.updateResearchRun(ctx.researchRunId, { status: "failed", complete: true });
           repo.stageEnd(eventId, "failed", "Website unreachable", { log: crawl.log }, crawl.log.map((l) => `${l.url}: ${l.detail ?? l.outcome}`).join("; "));
@@ -677,7 +700,7 @@ export async function processCompany(runId: number, opts: ProcessOptions = {}): 
 
       // ── 2. Extract ──
       current = "extract";
-      eventId = repo.stageStart(runId, "extract", "Building structured company profile…");
+      eventId = startStage( "extract", "Building structured company profile…");
       ctx.profile = await extractProfile(ctx);
       repo.setCompanyStatus(ctx.companyId, "running", { name: ctx.profile.company_name, profile: ctx.profile, dataSource: mock.size ? "mock" : "real" });
       repo.stageEnd(
@@ -688,7 +711,7 @@ export async function processCompany(runId: number, opts: ProcessOptions = {}): 
 
       // ── 3. Qualify (+ controlled research loop) ──
       current = "qualify";
-      eventId = repo.stageStart(runId, "qualify", "Classifying ICP signals…");
+      eventId = startStage( "qualify", "Classifying ICP signals…");
       const { result, rounds } = await qualifyWithResearchLoop(ctx, eventId);
       ctx.qualification = result;
       // Refresh the profile with everything the targeted pages added (used by the UI, pain points and email).
@@ -713,7 +736,7 @@ export async function processCompany(runId: number, opts: ProcessOptions = {}): 
 
     // ── 4. Contact ──
     current = "contact";
-    eventId = repo.stageStart(runId, "contact", "Searching for the right decision-maker…");
+    eventId = startStage( "contact", "Searching for the right decision-maker…");
     const { contact, note } = await findContact(ctx);
     repo.stageEnd(eventId, "completed", `${contact.name} · ${contact.title} · ${note}`);
 
@@ -735,7 +758,7 @@ export async function processCompany(runId: number, opts: ProcessOptions = {}): 
 
     // ── 5. Pain points ──
     current = "pain_points";
-    eventId = repo.stageStart(runId, "pain_points", "Identifying two evidence-backed pain points…");
+    eventId = startStage( "pain_points", "Identifying two evidence-backed pain points…");
     const q = ctx.qualification!;
     const ppInput = {
       company: {
@@ -775,7 +798,7 @@ export async function processCompany(runId: number, opts: ProcessOptions = {}): 
 
     // ── 6. Email generation + validation ──
     current = "email";
-    eventId = repo.stageStart(runId, "email", "Writing personalised email…");
+    eventId = startStage( "email", "Writing personalised email…");
     const emailRes = await generateValidatedEmail(ctx, contact, pp.painPoints);
     const dataSource = mock.size ? "mock" : "real";
     const emailId = repo.insertEmail({
@@ -907,6 +930,7 @@ export async function sendEmail(p: {
   prospectEmails: (string | null)[];
   confirmUnknownOutcome?: boolean;
 }): Promise<CompanyOutcome> {
+  assertNotKilled();
   const db = getDb();
   const eventId = repo.stageStart(p.runId, "send", "Sending to your own inbox…");
   const stored = db.prepare("SELECT data_source FROM emails WHERE id=?").get(p.emailId) as { data_source: string };
@@ -960,6 +984,7 @@ export async function sendEmail(p: {
   const footer = `\n\n—\nDemo delivery note: this email was generated for ${contactMeta.name} (${contactMeta.title}, ${contactMeta.company}). It was delivered only to your own inbox; the prospect was not contacted.`;
 
   try {
+    assertNotKilled(); // last check right before anything leaves the machine
     const res = await provider.send({ subject: email.subject, body: email.body + footer, prospectEmails });
     db.prepare("UPDATE email_sends SET status=?, gmail_message_id=?, gmail_thread_id=?, delivery_recipient=?, completed_at=? WHERE id=?").run(
       res.status,
@@ -995,6 +1020,7 @@ export async function retrySend(companyId: number, confirmUnknownOutcome: boolea
     | { id: number; contact_id: number; data_source: string }
     | undefined;
   if (!email) throw new Error("No email to send");
+  assertNotKilled();
   const holder = agentLockHolder();
   if (holder !== null) throw new Error(agentBusyMessage(holder));
   const company = db.prepare("SELECT domain FROM companies WHERE id=?").get(companyId) as { domain: string };

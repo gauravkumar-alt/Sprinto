@@ -6,6 +6,7 @@
  *  - resume:         re-run from stage 4 for a qualified company (e.g. after adding a Hunter key)
  *  - retry_send:     retry stage 7 for the latest email (confirmUnknownOutcome required if the last attempt's outcome is unknown)
  */
+import { KILLED_MESSAGE, killSwitchOn } from "@/lib/kill-switch";
 import { NextResponse } from "next/server";
 import { agentBusyMessage, agentLockHolder } from "@/lib/agent-lock";
 import { z } from "zod/v4";
@@ -45,6 +46,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (busy.n > 0) return NextResponse.json({ error: "This company is already being processed." }, { status: 409 });
 
   const a = parsed.data;
+  // Edits (contacts, notes) stay allowed; anything that runs the agent or sends is refused while stopped.
+  if (killSwitchOn() && ["retry", "resume", "retry_send", "approve"].includes(a.action)) {
+    return NextResponse.json({ error: KILLED_MESSAGE }, { status: 409 });
+  }
   if (getConfig().mode === "live" && isMockDomain(company.domain)) {
     return NextResponse.json({ error: "Mock .example companies can only be processed in demo mode." }, { status: 400 });
   }

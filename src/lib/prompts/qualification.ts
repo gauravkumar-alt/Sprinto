@@ -28,7 +28,7 @@ CRITERIA — one entry per id, found=true only with direct evidence:
 - saas: software delivered as SaaS / subscription / cloud platform.
 - b2b: customers are businesses / teams / companies.
 - product: an identifiable software product or platform.
-- funding_series_ac: a Series A, B or C round is explicitly stated.
+- funding_series_ac: a Seed, Series A, B or C round, Y Combinator backing, or venture backing is explicitly stated (not pre-seed, not Series D or later).
 - open_roles: ${OPEN_ROLES_THRESHOLD}+ open positions are listed (also fill open_roles_count).
 - enterprise_pricing: an Enterprise plan / enterprise pricing tier.
 - preparing_certification: the company says it is preparing for, planning, pursuing or undergoing SOC 2 / ISO 27001 / similar (e.g. "SOC 2 in progress", "pending"). Already holding a certification is NOT this — report it under existing_certifications.

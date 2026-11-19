@@ -7,6 +7,7 @@
 import type { z } from "zod/v4";
 import { MODEL_PRICES_PER_MTOK, getConfig } from "@/lib/config";
 import { getDb, nowIso } from "@/lib/db";
+import { assertNotKilled } from "@/lib/kill-switch";
 import { errorMessage, withRetry } from "@/lib/util";
 import { LLMError, type LLMProvider, type PromptName } from "./types";
 
@@ -28,11 +29,13 @@ export async function runPrompt<I, T>(
   input: I,
   ctx: { agentRunId?: number | null } = {},
 ): Promise<T> {
+  assertNotKilled();
   const cfg = getConfig().llm;
   const baseUser = prompt.buildUser(input);
   let user = baseUser;
   let lastIssue = "";
   for (let attempt = 0; attempt <= cfg.maxJsonRetries; attempt++) {
+    assertNotKilled(); // no further AI calls once the kill switch is on
     const started = Date.now();
     let raw;
     try {

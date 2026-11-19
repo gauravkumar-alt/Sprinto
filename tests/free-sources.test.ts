@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { findJobBoard, hackerNewsUrls } from "@/lib/providers/research/free-sources";
+import { findJobBoard, hackerNewsUrls, resetYcCache, ycDirectoryPage } from "@/lib/providers/research/free-sources";
 
 const res = (status: number, body: unknown) => ({ status, body: typeof body === "string" ? body : JSON.stringify(body) });
 
@@ -29,5 +29,22 @@ describe("free outside sources", () => {
     ] };
     const r = await hackerNewsUrls("Plane", "plane.so", async () => res(200, hits));
     expect(r.map((x) => x.url)).toEqual(["https://techcrunch.com/plane-raises"]);
+  });
+});
+
+describe("YC company directory", () => {
+  const list = JSON.stringify([
+    { name: "Cekura", slug: "cekura", website: "https://www.cekura.ai/", one_liner: "Voice AI testing", batch: "Fall 2024", status: "Active", team_size: 12, isHiring: true, url: "https://www.ycombinator.com/companies/cekura" },
+    { name: "Other", website: "https://other.io", batch: "W21" },
+  ]);
+  it("finds a listing by domain and states YC backing", async () => {
+    resetYcCache();
+    const p = await ycDirectoryPage("cekura.ai", async () => ({ status: 200, body: list }));
+    expect(p?.url).toBe("https://www.ycombinator.com/companies/cekura");
+    expect(p?.text).toContain("Cekura is backed by Y Combinator (batch: Fall 2024).");
+  });
+  it("never matches on name or a different domain", async () => {
+    resetYcCache();
+    expect(await ycDirectoryPage("cekura.com", async () => ({ status: 200, body: list }))).toBeNull();
   });
 });

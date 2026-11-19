@@ -13,6 +13,8 @@ export async function GET() {
 
 /** Screen the next batch of candidates (localhost only: the middleware blocks POSTs from shared links). */
 export async function POST() {
+  const { KILLED_MESSAGE, killSwitchOn } = await import("@/lib/kill-switch");
+  if (killSwitchOn()) return NextResponse.json({ error: KILLED_MESSAGE }, { status: 409 });
   const { startDiscovery, discoveryStatus } = await import("@/lib/discovery");
   const { started } = startDiscovery(20);
   return NextResponse.json({ started, ...discoveryStatus() }, { status: started ? 202 : 409 });

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { agentBusyMessage, agentLockHolder } from "@/lib/agent-lock";
+import { KILLED_MESSAGE, killSwitchOn } from "@/lib/kill-switch";
 import { z } from "zod/v4";
 import { getConfig } from "@/lib/config";
 import { getDb } from "@/lib/db";
@@ -9,10 +10,11 @@ import { isMockDomain, parseDomainCsv, parseDomainList } from "@/lib/security/do
 
 export const dynamic = "force-dynamic";
 
-const Body = z.object({ domains: z.string().max(20_000).optional(), csv: z.string().max(500_000).optional() });
+const Body = z.object({ domains: z.string().max(20_000).optional(), csv: z.string().max(500_000).optional(), fresh: z.boolean().optional() });
 
 export async function POST(req: Request) {
   recoverOnce();
+  if (killSwitchOn()) return NextResponse.json({ error: KILLED_MESSAGE }, { status: 409 });
   const lockHolder = agentLockHolder();
   if (lockHolder !== null) return NextResponse.json({ error: agentBusyMessage(lockHolder) }, { status: 409 });
   const parsedBody = Body.safeParse(await req.json().catch(() => null));
@@ -49,6 +51,7 @@ export async function POST(req: Request) {
 
   const companyIds = toRun.map((d) => repo.upsertCompany(d, isMockDomain(d) ? "mock" : "real", names.get(d)));
   const { batchId, runIds } = repo.createBatch(cfg.campaignId, cfg.mode, companyIds);
-  runInBackground(runIds);
+  // fresh: re-read websites and outside sources instead of reusing research from the last 72 hours.
+  runInBackground(runIds, { freshResearch: parsedBody.data.fresh === true });
   return NextResponse.json({ batchId, runIds, accepted: toRun, alreadyRunning, invalid, duplicates });
 }

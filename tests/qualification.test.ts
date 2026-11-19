@@ -77,8 +77,8 @@ describe("100-point rubric", () => {
     expect(r.adjustments.length).toBeGreaterThanOrEqual(3);
   });
 
-  it("requires 5+ open roles for the hiring-growth points", () => {
-    const r = decide(findings({ ...saasB2B, open_roles_count: 3, found: { ...BIZ, open_roles: ["E4"] } }));
+  it("requires 3+ open roles for the hiring-growth points", () => {
+    const r = decide(findings({ ...saasB2B, open_roles_count: 2, found: { ...BIZ, open_roles: ["E4"] } }));
     expect(r.categories.growth_stage.criteria.find((x) => x.id === "open_roles")!.points).toBe(0);
   });
 });
@@ -161,7 +161,7 @@ describe("thresholds", () => {
   });
   const score = (found: Record<string, string[]>) => decide(findings({ ...saasB2B, found: { ...BIZ, ...found } }));
 
-  it("75+ qualified, 55–74 needs review, below 55 not qualified", () => {
+  it("65+ qualified, 45–64 needs review, below 45 not qualified", () => {
     const top = { preparing_certification: ["E6"], compliance_hiring: ["E7"], enterprise_security_reviews: ["E8"], named_enterprise_customers: ["E9"], targets_enterprise: ["E10"] };
     expect(score(top).fit_score).toBe(75);
     expect(score(top).decision).toBe("qualified");
@@ -183,6 +183,25 @@ describe("thresholds", () => {
     expect(r.fit_score).toBe(75);
     expect(r.decision).toBe("research_more");
     expect(researchTargets(r, new Set(["homepage", "hiring", "pricing", "funding/news"]))).toContain("security/compliance");
+  });
+});
+
+describe("funding wording", () => {
+  const fundingFits = (text: string) =>
+    decideQualification({
+      findings: findings({ ...saasB2B, found: { ...BIZ, funding_series_ac: ["F1"] } }),
+      evidence: [...ev, { ref: "F1", type: "observed", text, url: "https://acme.io/about" }],
+      checkedPages: ALL,
+      pagesScraped: [],
+      canResearchMore: false,
+    }).categories.growth_stage.criteria.find((x) => x.id === "funding_series_ac")!.points;
+
+  it("counts Seed to Series C and YC backing, but not other uses of 'seed'", () => {
+    expect(fundingFits("Acme raised a $12M Series A led by Index.")).toBe(15);
+    expect(fundingFits("We closed our $4M seed round in March.")).toBe(15);
+    expect(fundingFits("Acme is backed by Y Combinator and General Catalyst.")).toBe(15);
+    expect(fundingFits("Seed your database with sample data in one click.")).toBe(0);
+    expect(fundingFits("We just raised our Series D.")).toBe(0);
   });
 });
 

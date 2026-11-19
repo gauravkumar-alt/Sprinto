@@ -51,7 +51,10 @@ const THIRD_PARTY_CRITERIA: Partial<Record<CriterionId, "any" | "job_board">> = 
 const PATTERNS: Partial<Record<CriterionId, RegExp[]>> = {
   // SaaS delivery: the word itself, a hosted product, or self-serve subscription plans ("free plan", "no credit card", "/month").
   saas: [/saas|software|subscription|cloud|platform|\bapp\b|per (seat|user|month)|\bapi\b|\b(free|pro|team|business|enterprise|starter|growth) (plan|tier)|free trial|no credit card|sign up (for )?free|\/\s?mo(nth)?\b|hosted/i],
-  funding_series_ac: [/series\s*-?\s*[abc]\b/i],
+  // Seed through Series C; pre-seed, Series D+ and IPO-stage companies don't count.
+  funding_series_ac: [
+    /series\s*-?\s*[abc]\b|\bseed (round|funding|financing|investment)\b|\b(raised|raises|closed|closes|announc\w*)\b[^.]{0,50}\bseed\b|\bseed[- ]funded\b|\b(backed|funded) by\b[^.]{0,60}\b(y ?combinator|yc)\b|\by ?combinator[- ]backed\b|\byc [wsfx]\d{2}\b|\bventure[- ]backed\b/i,
+  ],
   enterprise_pricing: [/enterprise/i],
   preparing_certification: [CERT_RE, PREP_RE],
   compliance_hiring: [/\bsecurity\b|\bcompliance\b|\bgrc\b|\binfosec\b|\bprivacy\b|\bgovernance\b|\brisk (and|&) compliance\b|\baudit/i],
@@ -253,7 +256,7 @@ export function decideQualification(params: {
     recommended_next_action: nextAction(decision, dq, missing),
     saas_status,
     stage_status,
-    stage_label: results.funding_series_ac.status === "FOUND" ? findings.funding_stage || "Series A–C" : findings.funding_stage || "Unknown",
+    stage_label: results.funding_series_ac.status === "FOUND" ? findings.funding_stage || "Seed–Series C" : findings.funding_stage || "Unknown",
     audit_trigger,
     enterprise_pressure,
     has_buying_trigger: categories.compliance_buying_signals.score > 0,

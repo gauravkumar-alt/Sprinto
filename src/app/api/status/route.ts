@@ -15,7 +15,8 @@ export async function GET(req: Request) {
   const { providerStatus } = await import("@/lib/providers");
   const { dashboardMetrics, listCompanies, recentBatches } = await import("@/lib/queries");
   recoverOnce();
-  const payload = { providers: providerStatus(), metrics: dashboardMetrics(), batches: recentBatches(), companies: listCompanies() };
+  const { killSwitchOn, killSwitchForcedByEnv } = await import("@/lib/kill-switch");
+  const payload = { killSwitch: { on: killSwitchOn(), forced: killSwitchForcedByEnv() }, providers: providerStatus(), metrics: dashboardMetrics(), batches: recentBatches(), companies: listCompanies() };
   // Shared-link viewers get a read-only view with email addresses partly masked.
   if (isRemoteViewer(req)) return NextResponse.json({ ...maskPayload(payload, contactEmailsOf(payload)), readOnly: true });
   return NextResponse.json({ ...payload, readOnly: false });

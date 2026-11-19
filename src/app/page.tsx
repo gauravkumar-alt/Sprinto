@@ -37,6 +37,7 @@ type Status = {
   batches: { id: number }[];
   companies: Company[];
   readOnly: boolean;
+  killSwitch?: { on: boolean; forced: boolean };
   snapshotAt?: string | null;
 };
 
@@ -73,7 +74,7 @@ function whyLine(c: Company, status: string): string | null {
   if (!f.has("targets_enterprise") && !f.has("named_enterprise_customers")) gaps.push("no enterprise signal");
   if (!f.has("saas") || !f.has("b2b")) gaps.unshift("B2B SaaS not confirmed");
   const score = c.score ?? 0;
-  return `${score}/100 (needs 75)${gaps.length ? ` · ${gaps.slice(0, 2).join(", ")}` : ""}`;
+  return `${score}/100 (needs 65)${gaps.length ? ` · ${gaps.slice(0, 2).join(", ")}` : ""}`;
 }
 
 /** Two-to-three word reason for the results table; the full explanation is the tooltip. */
@@ -142,6 +143,17 @@ export default function Dashboard() {
     return { unique, invalid: [...(t?.invalid ?? []), ...(c?.invalid ?? [])], dupCount, csvError: c && "error" in c ? c.error : undefined };
   }, [text, csv]);
 
+  async function toggleKill(on: boolean) {
+    if (on && !window.confirm("Stop the agent now? Queued companies are cancelled, running ones stop at their next step, and nothing is sent until you resume.")) return;
+    try {
+      const r = await postJson<{ on: boolean; cancelled?: number }>("/api/kill-switch", { on });
+      setMsg({ kind: on ? "bad" : "info", text: on ? `Agent stopped${r.cancelled ? ` — ${r.cancelled} queued compan${r.cancelled === 1 ? "y" : "ies"} cancelled` : ""}.` : "Agent resumed." });
+    } catch (e) {
+      setMsg({ kind: "bad", text: (e as Error).message });
+    }
+    load();
+  }
+
   async function run() {
     setSubmitting(true);
     setMsg(null);
@@ -194,9 +206,27 @@ export default function Dashboard() {
               <ProviderChip label="Gmail" {...p.gmail} />
             </>
           )}
+          {data && !data.readOnly && !data.killSwitch?.on && (
+            <button className="btn btn-sm btn-kill" onClick={() => toggleKill(true)} title="Stop all agent work now: cancels queued runs, stops running ones at the next step, blocks every send">
+              Stop agent
+            </button>
+          )}
           <ThemeToggle />
         </div>
       </header>
+
+      {data?.killSwitch?.on && !data.readOnly && (
+        <div className="notice n-bad kill-banner" role="alert" style={{ marginBottom: 16 }}>
+          <b>Agent stopped (kill switch on).</b> Nothing runs, no AI calls are made and no email is sent until you resume.
+          {data.killSwitch.forced ? (
+            <> Forced by <code>AGENT_KILL_SWITCH=true</code>: remove it from .env.local and restart to resume.</>
+          ) : (
+            <button className="btn btn-sm" style={{ marginLeft: 10 }} onClick={() => toggleKill(false)}>
+              Resume
+            </button>
+          )}
+        </div>
+      )}
 
       {loadError && <div className="notice n-bad" style={{ marginBottom: 12 }}>Couldn&apos;t load data ({loadError}).</div>}
       {p && anyMock && !data?.readOnly && (
@@ -285,7 +315,7 @@ export default function Dashboard() {
                 </button>
               )}
               <span className="spacer" />
-              <button className="btn btn-primary" disabled={submitting || preview.unique.length === 0} onClick={run}>
+              <button className="btn btn-primary" disabled={submitting || preview.unique.length === 0 || Boolean(data?.killSwitch?.on)} onClick={run}>
                 {submitting ? "Starting…" : "Run outreach agent"}
               </button>
             </div>
