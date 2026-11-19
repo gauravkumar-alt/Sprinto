@@ -409,3 +409,14 @@ td.c-why { min-width: 170px; max-width: 240px; font-size: 12.5px; line-height: 1
 
 .breakdown small { font-size: 9px; font-weight: 600; color: var(--faint); letter-spacing: .01em; }
 .mini:disabled { opacity: .45; cursor: not-allowed; }
+
+/* "Our judgement" points */
+.judge { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.judge > li { display: grid; grid-template-columns: 150px 1fr; gap: 12px; padding: 8px 0; border-top: 1px solid var(--border); }
+.judge > li:first-child { border-top: 0; padding-top: 2px; }
+.j-k { font-size: 12px; font-weight: 600; color: var(--faint); text-transform: uppercase; letter-spacing: .03em; padding-top: 2px; }
+.j-v { font-size: 14px; line-height: 1.5; }
+.j-quote { display: block; margin-top: 4px; padding: 6px 10px; border-left: 3px solid var(--border-strong); background: var(--panel-2); border-radius: 0 6px 6px 0; color: var(--muted); font-size: 13px; }
+.j-quote .ref { margin-left: 6px; }
+.j-sub { margin: 0; padding-left: 18px; }
+@media (max-width: 640px) { .judge > li { grid-template-columns: 1fr; gap: 2px; } }

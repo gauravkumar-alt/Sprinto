@@ -1,10 +1,11 @@
 "use client";
 import Link from "next/link";
-import { use, useCallback, useEffect, useState } from "react";
+import { use, useCallback, useEffect, useState, type ReactNode } from "react";
 import gsap from "gsap";
 import { CountUp, Fill, Pop, Reveal, reducedMotion, useGlider } from "@/components/motion";
 import { EmailBadge, Refs, SourceBadge, StageList, StatusBadge, ThemeToggle, postJson } from "@/components/ui";
 import type { CompanyProfile, QualificationResult } from "@/lib/schemas";
+import { getThresholds } from "@/lib/config";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Detail = any;
@@ -221,8 +222,8 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
       <div className="tab-pane" key={tab}>
       {tab === "overview" && (
         <div className="stack">
+          {q && <Judgement q={q} evidence={evidence} isMock={isMock} onRef={showEvidence} />}
           <div className="why-grid">
-            <Why q={q?.decision === "qualified" ? "Why qualified" : q?.decision === "needs_review" ? "Why it needs review" : "Why not qualified"} a={q ? verdict(q) : "Not assessed yet."} full={q?.explanation} />
             <Why q="Why this person" a={selected?.reason ?? "No reliable contact found yet."} />
             <Why q="Why these pain points" a={d.painPoints.length ? d.painPoints.map((p: any) => firstSentence(p.relevance)).join(" ") : "—"} full={d.painPoints.map((p: any) => p.relevance).join(" ")} />
             <Why q="Why this email" a={firstSentence(email?.personalisation?.personalisation_explanation) || "—"} full={email?.personalisation?.personalisation_explanation} />
@@ -257,15 +258,7 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
                   {q.categories && <a className="btn btn-sm" href={`/api/companies/${id}/qualification`} target="_blank" rel="noreferrer" title="The full score sheet as raw data">Raw data</a>}
                 </div>
               </div>
-              <p style={{ margin: 0 }} title={q.explanation}>{verdict(q)}</p>
-              {q.override_note && <div className="notice n-warn" style={{ marginTop: 10 }}>{verdict(q)}</div>}
-              {(q.disqualification_reasons?.length ?? 0) > 0 && (
-                <div className="notice n-bad" style={{ marginTop: 10 }}>
-                  {q.flags?.includes("ALREADY_CERTIFIED") && <b>ALREADY_CERTIFIED · </b>}
-                  {q.disqualification_reasons!.join(" · ")}
-                </div>
-              )}
-              {q.recommended_next_action && <p className="sub" style={{ margin: "10px 0 0" }}>Next: {q.recommended_next_action}</p>}
+              <Judgement q={q} evidence={evidence} isMock={isMock} onRef={showEvidence} bare />
 
               {q.categories ? (
                 <div style={{ marginTop: 16 }}>
@@ -311,7 +304,7 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
                     <dd>{q.existing_certifications!.map((c) => <span key={c.name} style={{ marginRight: 8 }}>{c.name} <Refs ids={c.evidence_refs} onClick={showEvidence} /></span>)}</dd>
                   </>
                 )}
-                {q.missing_information?.length > 0 && (<><dt>Unanswered</dt><dd>{q.missing_information.join(" · ")}</dd></>)}
+                {unanswered(q).length > 0 && (<><dt>Unanswered</dt><dd>{unanswered(q).join(" · ")}</dd></>)}
                 {(q.pages_scraped?.length ?? 0) > 0 && (
                   <>
                     <dt>Pages researched</dt>
@@ -611,5 +604,91 @@ function ManualContact({ domain, onSubmit }: { domain: string; onSubmit: (b: { n
         <button className="btn btn-sm" onClick={() => setOpen(false)}>Cancel</button>
       </div>
     </div>
+  );
+}
+
+/** Open questions, minus "already certified?" when a certification quote already answers it (older runs). */
+function unanswered(q: QualificationResult): string[] {
+  return (q.missing_information ?? []).filter((m) => !(q.existing_certifications?.length && m === "Is it already certified?"));
+}
+
+/** Page text sometimes glues a heading to the next words ("SecuritySOC 2"); add the missing space for reading. */
+const unglue = (s: string) => s.replace(/([a-z])([A-Z]{2,})/g, "$1 $2").replace(/^The page states:\s*/i, "").trim();
+
+/**
+ * "Our judgement": the decision and the reasons behind it as short points, each tied to a quote where one
+ * exists. Built only from the stored score sheet and evidence, so it shows exactly what the agent decided on.
+ */
+function Judgement({ q, evidence, isMock, onRef, bare }: { q: QualificationResult & { override_note?: string }; evidence: any[]; isMock: boolean; onRef: (ref: string) => void; bare?: boolean }) {
+  const th = getThresholds();
+  const byRef = new Map(evidence.map((e) => [e.ref, e]));
+  const quote = (ref?: string) => {
+    const e = ref ? byRef.get(ref) : null;
+    if (!e) return null;
+    return (
+      <span className="j-quote">
+        “{unglue(e.supporting_text || e.claim).slice(0, 200)}”
+        {e.source_url && /^https?:/.test(e.source_url) && !isMock ? (
+          <> · <a href={e.source_url} target="_blank" rel="noreferrer noopener">{e.source_url.replace(/^https?:\/\/(www\.)?/, "")}</a></>
+        ) : null}
+        <span className="ref" onClick={() => onRef(e.ref)} title="Show this quote in the evidence list">quote</span>
+      </span>
+    );
+  };
+  const crit = q.categories ? Object.values(q.categories).flatMap((c: any) => c.criteria) : [];
+  const names = (st: string) => crit.filter((c: any) => c.status === st);
+  const found = names("FOUND");
+  const missing = names("NOT_FOUND");
+  const unknown = names("UNKNOWN");
+  const certified = q.flags?.includes("ALREADY_CERTIFIED");
+  const reviewer = q.override_note;
+  const dq = (q.disqualification_reasons ?? []).filter((r) => !(certified && /already certified/i.test(r)));
+
+  const points: [string, ReactNode][] = [];
+  const decision =
+    reviewer?.startsWith("Rejected:") ? "Not a fit — you rejected it. Nothing will be sent."
+    : reviewer ? "Approved by you. The email draft can go to your own inbox."
+    : q.decision === "qualified" ? "Qualified. The email draft can go to your own inbox."
+    : q.decision === "needs_review" ? "Undecided — needs your approve or reject."
+    : "Not qualified — do not contact.";
+  points.push(["Decision", decision]);
+  if (reviewer) points.push(["Your note", reviewer.replace(/^Rejected:\s*/, "") || "—"]);
+
+  if (certified) {
+    const cert = q.existing_certifications?.[0];
+    points.push(["Main reason", <span key="cert">Already holds <b>{(q.existing_certifications ?? []).map((c) => c.name).join(", ") || "a certification"}</b>. {quote(cert?.evidence_refs?.[0])}</span>]);
+    points.push(["Why that rules it out", "Sprinto sells help getting SOC 2 / ISO 27001. A company that already has it has done that work, so it is not a prospect — whatever its score."]);
+  }
+  for (const r of dq) points.push(["Main reason", r]);
+  if (!certified && !dq.length && !q.categories) points.push(["Reason", verdict(q)]);
+
+  if (q.categories) {
+    const band = `qualified at ${th.qualified}+, review at ${th.needsReview}–${th.qualified - 1}`;
+    points.push(["Score", <span key="score">{q.fit_score}/100 ({band}){certified || dq.length ? <span className="faint"> — not used: the reason above overrides the score.</span> : q.decision !== "qualified" && !reviewer ? <span className="faint"> — {q.explanation}</span> : null}</span>]);
+    if (found.length) points.push(["In its favour", <ul key="fav" className="j-sub">{found.map((c: any) => <li key={c.id}>{c.criterion} <span className="faint">(+{c.points})</span></li>)}</ul>]);
+    if (missing.length) points.push(["Checked, not found", missing.map((c: any) => c.criterion).join(" · ")]);
+    if (unknown.length) points.push(["Couldn't check", unknown.map((c: any) => c.criterion).join(" · ")]);
+  }
+  if (q.recommended_next_action && !reviewer && !certified && !dq.length) points.push(["Next step", q.recommended_next_action]);
+
+  const body = (
+    <ul className="judge">
+      {points.map(([k, v], i) => (
+        <li key={i}>
+          <span className="j-k">{k}</span>
+          <div className="j-v">{v}</div>
+        </li>
+      ))}
+    </ul>
+  );
+  if (bare) return body;
+  return (
+    <section className="panel">
+      <div className="panel-head" style={{ marginBottom: 6 }}>
+        <h3>Our judgement</h3>
+        <StatusBadge status={reviewer?.startsWith("Rejected:") ? "not_qualified" : reviewer ? "qualified" : q.decision} />
+      </div>
+      {body}
+    </section>
   );
 }

@@ -199,7 +199,8 @@ export function decideQualification(params: {
   const saasFound = results.saas.status === "FOUND";
   const b2bFound = results.b2b.status === "FOUND";
   const unknownPotential = CRITERIA.filter((c) => results[c.id].status === "UNKNOWN").reduce((a, c) => a + c.points, 0);
-  const missing = missingQuestions(results, checkedPages);
+  // A certification quote answers "already certified?", even if no security page was read.
+  const missing = missingQuestions(results, checkedPages).filter((m) => !(certs.length && m === "Is it already certified?"));
   const certificationChecked = checkedPages.has("security/compliance");
 
   let decision: QualificationResult["decision"];
