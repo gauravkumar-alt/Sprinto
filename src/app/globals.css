@@ -420,3 +420,5 @@ td.c-why { min-width: 170px; max-width: 240px; font-size: 12.5px; line-height: 1
 .j-quote .ref { margin-left: 6px; }
 .j-sub { margin: 0; padding-left: 18px; }
 @media (max-width: 640px) { .judge > li { grid-template-columns: 1fr; gap: 2px; } }
+
+.mail-foot { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 16px 14px; border-top: 1px solid var(--border); font-size: 13px; }

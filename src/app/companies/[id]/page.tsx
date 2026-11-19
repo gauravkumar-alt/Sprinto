@@ -55,6 +55,7 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
   }, [tab]);
   const [highlight, setHighlight] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | "observed" | "inference" | "unknown">("all");
+  const [sending, setSending] = useState(false);
   const [actionMsg, setActionMsg] = useState<{ kind: "info" | "bad"; text: string } | null>(null);
 
   const load = useCallback(async () => {
@@ -102,6 +103,29 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
     }
   }
 
+  const OUTCOME: Record<string, string> = {
+    email_sent: "Sent to your inbox.",
+    email_simulated: "Demo send recorded (demo company, nothing left your machine).",
+    email_needs_review: "Not sent — see the Delivery line below for why.",
+    needs_review: "Not sent — approve the company first.",
+  };
+  async function sendNow() {
+    const unknown = send?.status === "outcome_unknown";
+    if (unknown && !confirm("The last send has an unknown outcome — check your inbox first. Send anyway?")) return;
+    if (!unknown && !confirm("Send this email to your own inbox? It is never sent to the company.")) return;
+    setActionMsg(null);
+    setSending(true);
+    try {
+      const r = await postJson<{ outcome: string }>(`/api/companies/${id}/actions`, { action: "retry_send", confirmUnknownOutcome: unknown });
+      setActionMsg({ kind: r.outcome === "email_sent" || r.outcome === "email_simulated" ? "info" : "bad", text: OUTCOME[r.outcome] ?? `Send finished: ${r.outcome}` });
+    } catch (e) {
+      setActionMsg({ kind: "bad", text: (e as Error).message });
+    } finally {
+      setSending(false);
+      setTimeout(load, 300);
+    }
+  }
+
   if (err) return <div className="shell"><p className="notice n-bad" style={{ marginTop: 24 }}>{err}</p><Link href="/">← Back</Link></div>;
   if (!d) return <div className="shell"><p className="empty">Loading…</p></div>;
 
@@ -141,15 +165,6 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
           {!d.readOnly && (
             <>
               <button className="btn btn-sm" disabled={running} onClick={() => act({ action: "retry" }, "Re-running…")}>Re-run</button>
-              {email && ["failed", "validated"].includes(email.status) && q?.decision === "qualified" && (
-                <button
-                  className="btn btn-sm"
-                  disabled={running}
-                  onClick={() => act({ action: "retry_send", confirmUnknownOutcome: send?.status === "outcome_unknown" ? confirm("Last send has an unknown outcome — check your inbox first. Send anyway?") : false }, "Send retried.")}
-                >
-                  Retry send
-                </button>
-              )}
             </>
           )}
           <ThemeToggle />
@@ -492,6 +507,26 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
               </div>
               <div className="mail-subject">{email.subject}</div>
               <div className="mail-body">{email.body}</div>
+              {!d.readOnly && (() => {
+                const done = send && ["sent", "simulated"].includes(send.status);
+                const why = done
+                  ? `Already sent to ${send.delivery_recipient ?? "your inbox"} on ${fmt(send.completed_at ?? send.attempted_at)}.`
+                  : q?.decision === "needs_review"
+                    ? "Approve this company first (“Your decision”, at the top of the page)."
+                    : q?.decision !== "qualified"
+                      ? "Can't send: this company is not qualified."
+                      : !["validated", "failed"].includes(email.status)
+                        ? "This draft didn't pass the quality check. Click Re-run to rewrite it."
+                        : null;
+                return (
+                  <div className="mail-foot">
+                    <button className="btn btn-primary" disabled={Boolean(why) || running || sending} onClick={sendNow}>
+                      {sending ? "Sending…" : done ? "Sent ✓" : send?.status === "failed" || send?.status === "outcome_unknown" ? "Retry send" : "Send to my inbox"}
+                    </button>
+                    <span className="faint">{why ?? "Goes only to your own inbox — never to the company."}</span>
+                  </div>
+                );
+              })()}
             </div>
           ) : (
             <section className="panel"><p className="sub" style={{ margin: 0 }}>No email yet.</p></section>
