@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DiscoverPanel } from "@/components/discover";
 import { Collapse, CountUp, Fill, Pop, Reveal, focusSection, useGlider, useStaggerOnChange, useTilt } from "@/components/motion";
-import { EmailBadge, Meter, Pips, ProviderChip, SourceBadge, StatusBadge, ThemeToggle, currentStepLabel, postJson, tone, type StageRow } from "@/components/ui";
+import { EmailBadge, Meter, Pips, SourceBadge, StatusBadge, ThemeToggle, currentStepLabel, postJson, tone, type StageRow } from "@/components/ui";
 import { parseDomainCsv, parseDomainList } from "@/lib/security/domain";
 
 type Provider = { state: string; detail: string };
@@ -64,10 +64,10 @@ function whyLine(c: Company, status: string): string | null {
   if (!c.decision || c.decision === "qualified") return null;
   const dq = c.disqualification ?? [];
   const cert = dq.find((d) => d.startsWith("Already certified"));
-  if (cert) return `Rejected: already has ${cert.replace(/^Already certified \(|\)$/g, "").split(", ").slice(0, 2).join(" + ")}`;
-  if (dq.some((d) => d.startsWith("Not a SaaS"))) return "Rejected: not a SaaS business";
-  if (dq.some((d) => d.startsWith("Primarily B2C"))) return "Rejected: sells to consumers";
-  if (dq.some((d) => d.startsWith("Outside target"))) return "Rejected: outside Sprinto's target";
+  if (cert) return `Already has ${cert.replace(/^Already certified \(|\)$/g, "").split(", ").slice(0, 2).join(" + ")}`;
+  if (dq.some((d) => d.startsWith("Not a SaaS"))) return "Not a SaaS business";
+  if (dq.some((d) => d.startsWith("Primarily B2C"))) return "Sells to consumers";
+  if (dq.some((d) => d.startsWith("Outside target"))) return "Outside Sprinto's target";
   const f = new Set(c.found);
   const gaps: string[] = [];
   if (!f.has("preparing_certification") && !f.has("compliance_hiring")) gaps.push("not preparing for SOC 2");
@@ -209,9 +209,6 @@ export default function Dashboard() {
               ) : (
                 data?.readOnly && <span className="badge b-mute">View only</span>
               )}
-              <ProviderChip label={p.llm.state === "real" ? p.llm.detail.split(" · ")[0].replace(/^./, (s) => s.toUpperCase()) : "AI"} {...p.llm} />
-              <ProviderChip label="Hunter" {...p.hunter} />
-              <ProviderChip label="Gmail" {...p.gmail} />
             </>
           )}
           {data && !data.readOnly && !data.killSwitch?.on && (
@@ -226,7 +223,7 @@ export default function Dashboard() {
       {data?.killSwitch?.on && !data.readOnly && (
         <Pop>
         <div className="notice n-bad kill-banner" role="alert" style={{ marginBottom: 16 }}>
-          <b>Agent stopped (kill switch on).</b> Nothing runs, no AI calls are made and no email is sent until you resume.
+          <b>Agent stopped (kill switch on).</b> Nothing runs and no email is sent until you resume.
           {data.killSwitch.forced ? (
             <> Forced by <code>AGENT_KILL_SWITCH=true</code>: remove it from .env.local and restart to resume.</>
           ) : (
@@ -435,9 +432,9 @@ export default function Dashboard() {
                         {c.sources.checked > 0 && (
                           <div
                             className="src-count"
-                            title={`Looked at ${c.sources.checked} sources; used ${c.sources.website + c.sources.external}: ${c.sources.website} pages from ${c.domain}, ${c.sources.external} outside (news, job boards)${c.sources.contact ? `; contact from ${c.sources.contact}` : ""}`}
+                            title={`${c.sources.website} from ${c.domain}, ${c.sources.external} from elsewhere (news, job boards)`}
                           >
-                            {c.sources.checked} checked · {c.sources.website + c.sources.external} used
+                            {c.sources.website + c.sources.external} pages read
                           </div>
                         )}
                       </td>
@@ -474,7 +471,7 @@ export default function Dashboard() {
                             <div>{c.contactName}</div>
                             <div className="faint clamp1" style={{ fontSize: 12 }}>{c.contactTitle}</div>
                             {c.contactEmail && (
-                              <div className="contact-email" title={`Found by Hunter${c.contactEmailStatus ? ` · ${c.contactEmailStatus}` : ""} — stored only, never emailed`}>
+                              <div className="contact-email" title={c.contactEmailStatus === "valid" ? "Work email (verified)" : "Work email"}>
                                 {c.contactEmail}
                                 {c.contactEmailStatus === "valid" && <span className="verified" aria-label="verified">✓</span>}
                               </div>

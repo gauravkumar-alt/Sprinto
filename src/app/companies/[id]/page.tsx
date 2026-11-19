@@ -139,7 +139,6 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
   const send = d.sends[0];
   const evidence: any[] = d.evidence;
   const isMock = c.data_source === "mock";
-  const rounds: any[] = d.research?.rounds ?? [];
   const status = running ? "running" : c.current_status;
   // Contact/email shown while the latest decision isn't "qualified" come from an earlier run.
   const earlier = q?.decision !== "qualified" && Boolean(selected || email);
@@ -195,7 +194,7 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
           <div className="k">Decision-maker</div>
           <div className="v ellipsis">{selected?.name ?? "—"}</div>
           <div className="s ellipsis">{selected ? selected.title : "Not found"}</div>
-          {selected?.business_email && <div className="contact-email ellipsis" title="Found by Hunter — stored only, never emailed">{selected.business_email}{selected.verification_status === "valid" && <span className="verified">✓</span>}</div>}
+          {selected?.business_email && <div className="contact-email ellipsis" title="Work email">{selected.business_email}{selected.verification_status === "valid" && <span className="verified">✓</span>}</div>}
         </div>
         <div>
           <div className="k">Pain points</div>
@@ -204,9 +203,9 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
         </div>
         <div>
           <div className="k">Sources</div>
-          <div className="v">{Math.max(d.research?.sources_checked ?? 0, d.pages.length)} checked</div>
-          <div className="s ellipsis" title="Read and used for the score: pages from the company's site + outside sources (news, job boards); contact from Hunter">
-            {d.pages.length} used · {d.pages.filter((p: any) => p.source_type === "website").length} site, {d.pages.filter((p: any) => p.source_type !== "website").length} outside{selected?.provider === "hunter" ? " · Hunter" : ""}
+          <div className="v">{d.pages.length} page{d.pages.length === 1 ? "" : "s"} read</div>
+          <div className="s ellipsis">
+            {d.pages.filter((p: any) => p.source_type === "website").length} from its website, {d.pages.filter((p: any) => p.source_type !== "website").length} from elsewhere
           </div>
         </div>
         <div>
@@ -239,17 +238,13 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
         <div className="stack">
           {q && <Judgement q={q} evidence={evidence} isMock={isMock} onRef={showEvidence} />}
           <div className="why-grid">
-            <Why q="Why this person" a={selected?.reason ?? "No reliable contact found yet."} />
+            <Why q="Why this person" a={selected ? cleanReason(selected.reason) : "No reliable contact found yet."} />
             <Why q="Why these pain points" a={d.painPoints.length ? d.painPoints.map((p: any) => firstSentence(p.relevance)).join(" ") : "—"} full={d.painPoints.map((p: any) => p.relevance).join(" ")} />
             <Why q="Why this email" a={firstSentence(email?.personalisation?.personalisation_explanation) || "—"} full={email?.personalisation?.personalisation_explanation} />
           </div>
           <section className="panel">
             <div className="panel-head" style={{ marginBottom: 0 }}>
-              <h3>Pipeline</h3>
-              <span className="faint" style={{ fontSize: 12 }}>
-                {d.llm?.calls ? `${d.llm.calls} AI calls` : ""}
-                {d.run?.duration_ms ? ` · ${(d.run.duration_ms / 1000).toFixed(0)}s` : ""}
-              </span>
+              <h3>Steps</h3>
             </div>
             <StageList stages={d.stages} />
             {d.run?.errors?.length > 0 && (
@@ -268,10 +263,6 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
             <>
               <div className="panel-head">
                 <div className="row"><span className="score" style={{ fontSize: 22 }}>{q.fit_score}/100</span><StatusBadge status={q.decision} /></div>
-                <div className="row">
-                  <span className="faint">Confidence {Math.round(q.confidence * 100)}%</span>
-                  {q.categories && <a className="btn btn-sm" href={`/api/companies/${id}/qualification`} target="_blank" rel="noreferrer" title="The full score sheet as raw data">Raw data</a>}
-                </div>
               </div>
               <Judgement q={q} evidence={evidence} isMock={isMock} onRef={showEvidence} bare />
 
@@ -294,12 +285,11 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
                             <span className={`badge st st-${cr.status}`}>{cr.status === "NOT_FOUND" ? "Not found" : cr.status === "FOUND" ? "Found" : "Unknown"}</span>
                             {cr.evidence[0] && (
                               <div className="ev">
-                                <span className="ref" onClick={() => showEvidence(cr.evidence[0].ref)}>{cr.evidence[0].ref}</span>
+                                <span className="ref" onClick={() => showEvidence(cr.evidence[0].ref)} title="Show this quote in the evidence list">quote</span>
                                 “{cr.evidence[0].text.replace(/^The page states:\s*/i, "").slice(0, 220)}”
                                 {cr.evidence[0].source_url && /^https?:/.test(cr.evidence[0].source_url) && !isMock && (
                                   <> · <a href={cr.evidence[0].source_url} target="_blank" rel="noreferrer noopener">source</a></>
                                 )}
-                                {cr.confidence ? <span className="faint"> · {Math.round(cr.confidence * 100)}%</span> : null}
                               </div>
                             )}
                           </div>
@@ -319,10 +309,10 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
                     <dd>{q.existing_certifications!.map((c) => <span key={c.name} style={{ marginRight: 8 }}>{c.name} <Refs ids={c.evidence_refs} onClick={showEvidence} /></span>)}</dd>
                   </>
                 )}
-                {unanswered(q).length > 0 && (<><dt>Unanswered</dt><dd>{unanswered(q).join(" · ")}</dd></>)}
+                {unanswered(q).length > 0 && (<><dt>Still unknown</dt><dd>{unanswered(q).join(" · ")}</dd></>)}
                 {(q.pages_scraped?.length ?? 0) > 0 && (
                   <>
-                    <dt>Pages researched</dt>
+                    <dt>Pages read</dt>
                     <dd>
                       {q.pages_scraped!.map((u) => (
                         <div key={u} className="ellipsis">{isMock || !/^https?:/.test(u) ? u : <a href={u} target="_blank" rel="noreferrer noopener">{u.replace(/^https?:\/\//, "")}</a>}</div>
@@ -330,26 +320,8 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
                     </dd>
                   </>
                 )}
-                {q.research_summary && (<><dt>Summary</dt><dd className="sub">{q.research_summary}</dd></>)}
               </dl>
 
-              {q.adjustments?.length > 0 && (
-                <details style={{ marginTop: 12 }}>
-                  <summary>Claims not counted ({q.adjustments.length})</summary>
-                  <ul className="list-tight sub">{q.adjustments.map((a, i) => <li key={i}>{a}</li>)}</ul>
-                </details>
-              )}
-              {rounds.length > 0 && (
-                <details style={{ marginTop: 12 }}>
-                  <summary>Research steps ({rounds.length})</summary>
-                  {rounds.map((r: any) => (
-                    <div key={r.round} className="evidence-item">
-                      <b>Step {r.round}</b> <span className="sub">· {(r.action.pageTypes ?? []).join(", ") || "—"} · {r.scoreBefore} → {r.scoreAfter}</span>
-                      {r.newEvidence.length > 0 && <div style={{ marginTop: 4 }}><Refs ids={r.newEvidence} onClick={showEvidence} /></div>}
-                    </div>
-                  ))}
-                </details>
-              )}
             </>
           ) : (
             <p className="sub" style={{ margin: 0 }}>Not assessed yet.</p>
@@ -381,13 +353,13 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
               <div className="panel-head">
                 <h3>Sources read</h3>
                 <span className="faint" style={{ fontSize: 12 }}>
-                  {d.pages.filter((p: any) => p.source_type === "website").length} from {c.domain} · {d.pages.filter((p: any) => p.source_type !== "website").length} outside (max 5)
+                  {d.pages.filter((p: any) => p.source_type === "website").length} from {c.domain} · {d.pages.filter((p: any) => p.source_type !== "website").length} from elsewhere
                 </span>
               </div>
               <div className="sources">
                 {d.pages.map((p: any) => (
                   <a key={p.id} href={isMock ? undefined : p.url} target="_blank" rel="noreferrer noopener" className={`source ${p.source_type === "website" ? "own" : "outside"}`} title={p.url}>
-                    <span className="kind">{p.source_type === "website" ? "Site" : "Outside"}</span>
+                    <span className="kind">{p.source_type === "website" ? "Website" : "Elsewhere"}</span>
                     <span className="ellipsis">{p.title || p.url}</span>
                     <span className="host">{(() => { try { return new URL(p.url).hostname.replace(/^www\./, ""); } catch { return ""; } })()}</span>
                   </a>
@@ -410,22 +382,15 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
             {shown.map((e) => (
               <div key={e.ref} id={`ev-${e.ref}`} className={`evidence-item ${e.evidence_type}${highlight === e.ref ? " hl" : ""}`}>
                 <div className="row" style={{ gap: 6 }}>
-                  <span className="ref">{e.ref}</span>
-                  <span className="sub">{e.category}</span>
+                  <span className="sub" style={{ textTransform: "capitalize" }}>{e.category}</span>
                 </div>
-                <div className="quote">{e.evidence_type === "observed" ? `“${e.supporting_text}”` : e.claim}</div>
+                <div className="quote">{e.evidence_type === "observed" ? `“${unglue(e.supporting_text)}”` : e.claim}</div>
                 <div className="meta">
                   {e.source_url && e.data_source !== "mock" && /^https?:/.test(e.source_url) ? <a href={e.source_url} target="_blank" rel="noreferrer noopener">{e.source_url}</a> : e.source_url ?? "No source"}
                   {e.retrieved_at ? ` · ${fmt(e.retrieved_at)}` : ""}
                 </div>
               </div>
             ))}
-            {d.pages.length > 0 && (
-              <details style={{ marginTop: 12 }}>
-                <summary>Pages read ({d.pages.length})</summary>
-                <ul className="list-tight sub">{d.pages.map((pg: any) => <li key={pg.id} className="ellipsis">{pg.url}</li>)}</ul>
-              </details>
-            )}
           </section>
         </div>
       )}
@@ -437,16 +402,14 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
               <div className="person">
                 <div className="avatar">{initials(selected.name)}</div>
                 <div>
-                  <div className="row" style={{ gap: 6 }}><b style={{ fontSize: 16 }}>{selected.name}</b>{selected.data_source === "mock" && <span className="badge b-mock">Mock</span>}</div>
+                  <div className="row" style={{ gap: 6 }}><b style={{ fontSize: 16 }}>{selected.name}</b>{selected.data_source === "mock" && <span className="badge b-mock">Demo</span>}</div>
                   <div className="sub">{selected.title}{selected.department ? ` · ${selected.department.length <= 3 ? selected.department.toUpperCase() : selected.department}` : ""}</div>
                 </div>
-                <span className="spacer" />
-                <span className="badge b-mute">{Math.round(selected.confidence * 100)}% confidence</span>
               </div>
-              <p style={{ margin: "14px 0 0" }}>{selected.reason}</p>
+              <p style={{ margin: "14px 0 0" }}>{cleanReason(selected.reason)}</p>
               <dl className="kv" style={{ marginTop: 14 }}>
-                <dt>Source</dt><dd>{selected.provider === "hunter" ? "Hunter.io" : selected.provider === "manual" ? "Entered manually" : "Mock"} <Refs ids={JSON.parse(selected.evidence_ids_json || "[]")} onClick={showEvidence} /></dd>
-                <dt>Email (found, never emailed)</dt><dd>{selected.business_email ?? "—"}{selected.verification_status ? <span className="faint"> · {selected.verification_status}</span> : null}</dd>
+                <dt>Source</dt><dd>{selected.provider === "hunter" ? "Found with Hunter.io" : selected.provider === "manual" ? "Added by you" : "Demo data"} <Refs ids={JSON.parse(selected.evidence_ids_json || "[]")} onClick={showEvidence} /></dd>
+                <dt>Work email</dt><dd>{selected.business_email ?? "Not found"}{selected.verification_status === "valid" ? <span className="faint"> · verified</span> : null}</dd>
               </dl>
             </>
           ) : (
@@ -499,7 +462,7 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
                     <b>{email.personalisation?.prospect_name ? `To ${email.personalisation.prospect_name}` : "Draft"}</b>
                     <span className="faint">· {email.personalisation?.prospect_role}</span>
                   </div>
-                  <div className="mail-meta ellipsis">Delivered to {send?.delivery_recipient ?? "your inbox"} · never to the prospect</div>
+                  {send && ["sent", "simulated"].includes(send.status) && <div className="mail-meta ellipsis">Sent to your inbox · {fmt(send.completed_at ?? send.attempted_at)}</div>}
                 </div>
                 <div className="row" style={{ gap: 6 }}>
                   <StatusBadge status={send?.status ?? email.status} />
@@ -507,9 +470,11 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
               </div>
               <div className="mail-subject">{email.subject}</div>
               <div className="mail-body">{email.body}</div>
-              {!d.readOnly && (() => {
+              {(() => {
                 const done = send && ["sent", "simulated"].includes(send.status);
-                const why = done
+                const why = d.readOnly
+                  ? "This shared copy is view-only. Send from your own copy of the app."
+                  : done
                   ? `Already sent to ${send.delivery_recipient ?? "your inbox"} on ${fmt(send.completed_at ?? send.attempted_at)}.`
                   : q?.decision === "needs_review"
                     ? "Approve this company first (“Your decision”, at the top of the page)."
@@ -523,7 +488,7 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
                     <button className="btn btn-primary" disabled={Boolean(why) || running || sending} onClick={sendNow}>
                       {sending ? "Sending…" : done ? "Sent ✓" : send?.status === "failed" || send?.status === "outcome_unknown" ? "Retry send" : "Send to my inbox"}
                     </button>
-                    <span className="faint">{why ?? "Goes only to your own inbox — never to the company."}</span>
+                    <span className="faint">{why ?? "Sends this draft to your inbox."}</span>
                   </div>
                 );
               })()}
@@ -534,33 +499,20 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
           {email && (
             <section className="panel">
               <dl className="kv">
-                <dt>Hook</dt><dd>{email.personalisation?.personalisation_hook}</dd>
+                <dt>Personal touch</dt><dd>{email.personalisation?.personalisation_hook}</dd>
                 <dt>Pain point</dt><dd>{email.personalisation?.pain_point_used}</dd>
                 <dt>Evidence</dt><dd><Refs ids={email.evidence_ids} onClick={showEvidence} /></dd>
-                <dt>Validation</dt><dd>{email.validation_status} · {email.attempts} attempt{email.attempts > 1 ? "s" : ""}</dd>
+                <dt>Quality check</dt><dd>{email.validation_status === "PASS" ? "Passed" : "Needs an edit"}</dd>
                 {send && (
                   <>
-                    <dt>Delivery</dt>
+                    <dt>Sent</dt>
                     <dd>
                       <StatusBadge status={send.status} /> <span className="faint">{fmt(send.completed_at ?? send.attempted_at)}</span>
-                      {send.gmail_message_id && <div className="mono faint" style={{ marginTop: 2 }}>{send.gmail_message_id}</div>}
                       {send.error && <div style={{ color: "var(--bad)", marginTop: 2 }}>{send.error}</div>}
                     </dd>
                   </>
                 )}
               </dl>
-              {(email.validation?.attempts ?? []).length > 0 && (
-                <details style={{ marginTop: 12 }}>
-                  <summary>Validation log</summary>
-                  {(email.validation?.attempts ?? []).map((a: any) => (
-                    <div key={a.attempt} className="evidence-item">
-                      <b>Attempt {a.attempt}: {a.verdict}</b>
-                      {a.deterministic.length > 0 && <div className="meta">{a.deterministic.join("; ")}</div>}
-                      {a.critic?.issues?.length > 0 && <div className="meta">{a.critic.issues.join("; ")}</div>}
-                    </div>
-                  ))}
-                </details>
-              )}
             </section>
           )}
         </div>
@@ -726,4 +678,10 @@ function Judgement({ q, evidence, isMock, onRef, bare }: { q: QualificationResul
       {body}
     </section>
   );
+}
+
+/** The contact's reason without internal notes about how it was ranked or which tool found it. */
+function cleanReason(s?: string | null): string {
+  // These notes always come last ("… Ranked for X; contact data from Hunter.io, email verification …").
+  return (s ?? "").replace(/\s*Ranked for[\s\S]*$/i, "").replace(/\s*;?\s*contact data from[\s\S]*$/i, "").trim();
 }

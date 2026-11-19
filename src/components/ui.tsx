@@ -72,7 +72,7 @@ const LABEL: Record<PipelineStage, string> = {
 /** First one or two "·"-separated parts of a stage summary, capped — full text stays in the tooltip. */
 export function shortSummary(s: string | null | undefined, max = 58): string {
   if (!s) return "";
-  const parts = s.split(" · ");
+  const parts = plainSummary(s).split(" · ");
   let out = parts[0];
   if (parts[1] && (out + " · " + parts[1]).length <= max) out += " · " + parts[1];
   return out.length > max ? out.slice(0, max - 1).trimEnd() + "…" : out;
@@ -88,7 +88,7 @@ export function StageList({ stages }: { stages: StageRow[] }) {
         const s = by.get(st);
         const status = s?.status ?? "pending";
         return (
-          <li key={st} className={`step s-${status}`} title={s?.summary ?? undefined}>
+          <li key={st} className={`step s-${status}`} title={s?.summary ? plainSummary(s.summary) : undefined}>
             <span className="icon">{ICON[status]}</span>
             <span className="name">
               {i + 1}. {LABEL[st]}
@@ -107,7 +107,7 @@ export function Pips({ stages }: { stages: StageRow[] }) {
   return (
     <div className="pips">
       {PIPELINE_STAGES.map((st) => (
-        <span key={st} className={`pip ${by.get(st)?.status ?? ""}`} title={`${LABEL[st]}: ${by.get(st)?.summary ?? "pending"}`} />
+        <span key={st} className={`pip ${by.get(st)?.status ?? ""}`} title={`${LABEL[st]}: ${plainSummary(by.get(st)?.summary) || "not started"}`} />
       ))}
     </div>
   );
@@ -196,4 +196,18 @@ export async function postJson<T = unknown>(url: string, body: unknown): Promise
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error((json as { error?: string }).error ?? `HTTP ${res.status}`);
   return json as T;
+}
+
+/** Stage notes in reader's words: drops cache/attempt counts and other internal details. */
+export function plainSummary(s: string | null | undefined): string {
+  return (s ?? "")
+    .replace(/^Reused research from ([^(]*?)\s*\(cache\)/, "Research from $1")
+    .replace(/\s*\(cache\)/g, "")
+    .replace(/^Reused from the previous run$/, "Done earlier")
+    .replace(/SaaS: yes/, "sells software")
+    .replace(/SaaS: no/, "not confirmed as software")
+    .replace(/^Validated · \d+ attempts?/, "Draft passed the quality check")
+    .replace(/(\d+) evidenced, (\d+) inferred/, "$1 backed by quotes, $2 inferred from role")
+    .replace(/\s*\(id [^)]*\)/g, "")
+    .trim();
 }
