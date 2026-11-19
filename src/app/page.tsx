@@ -3,7 +3,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DiscoverPanel } from "@/components/discover";
-import { CountUp, Fill, Reveal, focusSection } from "@/components/motion";
+import { Collapse, CountUp, Fill, Pop, Reveal, focusSection, useGlider, useStaggerOnChange, useTilt } from "@/components/motion";
 import { Meter, Pips, ProviderChip, SourceBadge, StatusBadge, ThemeToggle, currentStepLabel, postJson, tone, type StageRow } from "@/components/ui";
 import { parseDomainCsv, parseDomainList } from "@/lib/security/domain";
 
@@ -105,12 +105,16 @@ export default function Dashboard() {
   const [data, setData] = useState<Status | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [text, setText] = useState("");
+  const [showFinder, setShowFinder] = useState(false);
+  const [showRun, setShowRun] = useState(false);
   const [csv, setCsv] = useState<{ name: string; content: string } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [msg, setMsg] = useState<{ kind: "info" | "bad"; text: string } | null>(null);
   const [activeBatch, setActiveBatch] = useState<number | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
   const resultsRef = useRef<HTMLElement>(null);
+  const filtersRef = useGlider(".filter.on", filter);
+  const rowsRef = useStaggerOnChange<HTMLTableSectionElement>("tr", filter);
   const pick = (f: Filter) => {
     setFilter((cur) => (cur === f && f !== "all" ? "all" : f));
     focusSection(resultsRef.current);
@@ -181,6 +185,8 @@ export default function Dashboard() {
   const sentAll = list.filter((c) => ["sent", "simulated"].includes(c.emailStatus ?? "")).length;
   const sentOld = list.filter(sentEarlier).length;
   const share = (n: number | undefined) => (total ? ((n ?? 0) / total) * 100 : 0);
+  // The run box stays hidden until asked for, but never hides a list you've typed or a run being started.
+  const runOpen = showRun || Boolean(text.trim()) || Boolean(csv) || submitting;
   const showProgress = running || progress.some((c) => c.run?.status === "running" || c.run?.status === "queued") || (activeBatch !== null && progress.length > 0);
 
   return (
@@ -216,6 +222,7 @@ export default function Dashboard() {
       </header>
 
       {data?.killSwitch?.on && !data.readOnly && (
+        <Pop>
         <div className="notice n-bad kill-banner" role="alert" style={{ marginBottom: 16 }}>
           <b>Agent stopped (kill switch on).</b> Nothing runs, no AI calls are made and no email is sent until you resume.
           {data.killSwitch.forced ? (
@@ -226,6 +233,7 @@ export default function Dashboard() {
             </button>
           )}
         </div>
+        </Pop>
       )}
 
       {loadError && <div className="notice n-bad" style={{ marginBottom: 12 }}>Couldn&apos;t load data ({loadError}).</div>}
@@ -258,7 +266,7 @@ export default function Dashboard() {
         />
       </section>
 
-      <div className={`run-row${showProgress ? " with-progress" : ""}`} data-reveal>
+      <div className={`run-row${showProgress && (data?.readOnly || runOpen) ? " with-progress" : ""}`} data-reveal>
         {data?.readOnly ? (
           <section className="panel">
             <h2>Shared view</h2>
@@ -268,9 +276,14 @@ export default function Dashboard() {
             </p>
           </section>
         ) : (
+          <Collapse open={runOpen}>
           <section className="panel">
             <div className="panel-head" style={{ marginBottom: 10 }}>
               <h2>Run the agent</h2>
+              <span className="spacer" />
+              <button className="link-btn" onClick={() => setShowRun(false)} disabled={Boolean(text.trim() || csv || submitting)} title={text.trim() || csv ? "Clear the list to hide" : "Hide"}>
+                Hide
+              </button>
               {p?.mode === "demo" && (
                 <button className="btn btn-sm" onClick={() => setText(MOCK_DEMO)} title="Five fictional .example companies">
                   Demo set
@@ -319,12 +332,13 @@ export default function Dashboard() {
                 {submitting ? "Starting…" : "Run outreach agent"}
               </button>
             </div>
-            {msg && <div className={`notice ${msg.kind === "bad" ? "n-bad" : "n-info"}`} style={{ marginTop: 10 }}>{msg.text}</div>}
+            {msg && <Pop k={msg.text}><div className={`notice ${msg.kind === "bad" ? "n-bad" : "n-info"}`} style={{ marginTop: 10 }}>{msg.text}</div></Pop>}
             <div className="guard">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /><path d="m9 12 2 2 4-4" /></svg>
               Emails go only to {p?.demoInbox ?? "your inbox"} — never to prospects
             </div>
           </section>
+          </Collapse>
         )}
 
         {showProgress && (
@@ -354,13 +368,33 @@ export default function Dashboard() {
       </div>
 
       {data && !data.readOnly && (
-        <DiscoverPanel onAdd={(lines) => setText((t) => [t.trim(), ...lines].filter(Boolean).join("\n"))} />
+        <>
+          <div className="finder-link">
+            {!runOpen && (
+              <button className="link-btn" onClick={() => setShowRun(true)}>
+                + Run on new companies
+              </button>
+            )}
+            <button className="link-btn" onClick={() => setShowFinder((v) => !v)} aria-expanded={showFinder}>
+              {showFinder ? "Hide company finder" : "Find new companies to research →"}
+            </button>
+          </div>
+          <Collapse open={showFinder}>
+            <DiscoverPanel
+              onAdd={(lines) => {
+                setText((t) => [t.trim(), ...lines].filter(Boolean).join("\n"));
+                setShowRun(true); // open the run box with the added companies
+              }}
+            />
+          </Collapse>
+        </>
       )}
 
       <section className="panel" style={{ marginTop: 16, scrollMarginTop: 16 }} ref={resultsRef} data-reveal>
         <div className="panel-head">
           <h2>Results</h2>
-          <div className="filters">
+          <div className="filters" ref={filtersRef}>
+            <span className="glider" aria-hidden />
             {FILTERS.map(([k, label]) => (
               <button key={k} className={`filter${filter === k ? " on" : ""}`} onClick={() => setFilter(k)}>
                 {label} {list.filter((c) => matches(c, k)).length}
@@ -384,7 +418,7 @@ export default function Dashboard() {
                   <th>Email</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody ref={rowsRef}>
                 {list.filter((c) => matches(c, filter)).map((c) => {
                   const status = c.run?.status === "running" || c.run?.status === "queued" ? c.run.status : c.status;
                   return (
@@ -481,8 +515,9 @@ export default function Dashboard() {
 }
 
 function Metric({ label, value, hint, pct, tone, on, onClick }: { label: string; value: number | undefined; hint?: string; pct: number; tone?: "ok" | "warn" | "bad"; on?: boolean; onClick: () => void }) {
+  const tilt = useTilt<HTMLButtonElement>(4);
   return (
-    <button type="button" className={`metric${tone ? ` t-${tone}` : ""}${on ? " on" : ""}`} onClick={onClick} aria-pressed={on} data-reveal>
+    <button ref={tilt} type="button" className={`metric${tone ? ` t-${tone}` : ""}${on ? " on" : ""}`} onClick={onClick} aria-pressed={on} data-reveal>
       <span className="go" aria-hidden>↓</span>
       <div className="label">{label}</div>
       <div className="value"><CountUp value={value} /></div>

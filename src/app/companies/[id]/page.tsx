@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { use, useCallback, useEffect, useState } from "react";
 import gsap from "gsap";
-import { Fill, Reveal, reducedMotion } from "@/components/motion";
+import { CountUp, Fill, Pop, Reveal, reducedMotion, useGlider } from "@/components/motion";
 import { Refs, SourceBadge, StageList, StatusBadge, ThemeToggle, postJson } from "@/components/ui";
 import type { CompanyProfile, QualificationResult } from "@/lib/schemas";
 
@@ -45,6 +45,7 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
   const [d, setD] = useState<Detail | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("overview");
+  const tabsRef = useGlider<HTMLElement>(".tab.active", tab);
   // Tab content slides in on every switch.
   useEffect(() => {
     if (reducedMotion()) return;
@@ -155,20 +156,22 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
       </header>
 
       {isMock && <div className="notice n-mock" style={{ marginBottom: 12 }}>Fictional demo company — not real research.</div>}
-      {actionMsg && <div className={`notice ${actionMsg.kind === "bad" ? "n-bad" : "n-info"}`} style={{ marginBottom: 12 }}>{actionMsg.text}</div>}
+      {actionMsg && <Pop k={actionMsg.text}><div className={`notice ${actionMsg.kind === "bad" ? "n-bad" : "n-info"}`} style={{ marginBottom: 12 }}>{actionMsg.text}</div></Pop>}
 
       {q?.decision === "needs_review" && !running && !d.readOnly && (
+        <Pop>
         <ReviewBox
           onApprove={(note) => act({ action: "approve", note }, "Approved — finding the decision-maker and writing the email (sent only to your inbox)…")}
           onReject={(note) => act({ action: "reject", note }, "Rejected — marked not qualified. Nothing will be sent.")}
         />
+        </Pop>
       )}
 
       {/* Result banner: the whole story in one line */}
       <div className="hero" data-reveal>
         <div>
           <div className="k">ICP score</div>
-          <div className="v">{q ? `${q.fit_score}/100` : "—"}</div>
+          <div className="v">{q ? <><CountUp value={q.fit_score} />/100</> : "—"}</div>
           <div className="s">{q ? <StatusBadge status={q.decision} /> : "Not assessed"}</div>
         </div>
         <div>
@@ -196,7 +199,8 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
         </div>
       </div>
 
-      <nav className="tabs" role="tablist" data-reveal>
+      <nav className="tabs" role="tablist" data-reveal ref={tabsRef}>
+        <span className="glider" aria-hidden />
         {(
           [
             ["overview", "Overview", null],

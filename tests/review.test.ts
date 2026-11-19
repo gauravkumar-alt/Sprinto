@@ -9,7 +9,6 @@ const act = (id: number, body: unknown) =>
   POST(new Request("http://127.0.0.1/x", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }), { params: Promise.resolve({ id: String(id) }) });
 
 async function reviewCompany() {
-  useProviders();
   const id = repo.upsertCompany("ledgerly.example", "mock");
   const { runIds } = repo.createBatch("test", "demo", [id]);
   expect(await processCompany(runIds[0])).toBe("needs_review");
@@ -20,6 +19,7 @@ describe("human review: approve / reject", () => {
   beforeEach(() => freshDb());
 
   it("reject marks the company not qualified with the reviewer's reason, and nothing is sent", async () => {
+    useProviders();
     const id = await reviewCompany();
     const res = await act(id, { action: "reject", note: "Agency, not a product company" });
     expect(res.status).toBe(200);
@@ -34,6 +34,7 @@ describe("human review: approve / reject", () => {
   });
 
   it("approve needs a reason", async () => {
+    useProviders();
     const id = await reviewCompany();
     expect((await act(id, { action: "approve", note: "ok" })).status).toBe(400);
   });

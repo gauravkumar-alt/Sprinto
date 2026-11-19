@@ -119,8 +119,9 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
   .metric .mbar { margin-top: 7px; height: 4px; }
   .metric .sent-note, .metric .go { display: none; }
 }
-.metric { position: relative; text-align: left; font: inherit; color: inherit; cursor: pointer; background: var(--panel); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); border: 1px solid var(--glass-border); outline: 1px solid var(--border); outline-offset: -1px; border-radius: var(--radius); padding: 14px 16px 16px; box-shadow: var(--shadow); transition: box-shadow .25s ease, transform .25s ease, outline-color .25s ease; }
-.metric:hover { box-shadow: var(--shadow-hover); transform: translateY(-2px); }
+.metric { position: relative; text-align: left; font: inherit; color: inherit; cursor: pointer; background: var(--panel); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); border: 1px solid var(--glass-border); outline: 1px solid var(--border); outline-offset: -1px; border-radius: var(--radius); padding: 14px 16px 16px; box-shadow: var(--shadow); transition: box-shadow .25s ease, outline-color .25s ease; will-change: transform; }
+.metric:hover { box-shadow: var(--shadow-hover); }
+@media (hover: none), (prefers-reduced-motion: reduce) { .metric:hover { transform: translateY(-2px); } }
 .metric:focus-visible { outline: 2px solid var(--accent); }
 .metric.on { outline: 2px solid var(--accent); box-shadow: var(--shadow-hover); }
 .metric .mbar { height: 5px; margin-top: 10px; border-radius: 99px; background: var(--border); overflow: hidden; }
@@ -370,3 +371,21 @@ td.c-why { min-width: 170px; max-width: 240px; font-size: 12.5px; line-height: 1
 .btn-approve:disabled { background: var(--panel-2); color: var(--faint); border-color: var(--border-strong); }
 .btn-reject { color: var(--bad); background: var(--bad-bg); border-color: color-mix(in srgb, var(--bad) 45%, transparent); font-weight: 650; }
 .btn-reject:hover { background: var(--bad); color: #fff; }
+
+/* Company finder link */
+.finder-link { margin-top: 12px; display: flex; justify-content: flex-end; gap: 18px; flex-wrap: wrap; }
+.link-btn:disabled { color: var(--faint); cursor: default; text-decoration: none; }
+.link-btn { background: none; border: 0; padding: 4px 2px; color: var(--accent); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.link-btn:hover { text-decoration: underline; }
+
+/* Gliding highlight (filters, tabs) — GSAP moves it to the active item */
+.filters, .tabs { position: relative; }
+.glider { position: absolute; left: 0; top: 0; width: 0; height: 0; pointer-events: none; visibility: hidden; z-index: 0; }
+.filters > .glider { border-radius: 999px; background: var(--accent-grad); box-shadow: 0 6px 14px -8px rgba(91,91,246,.8); }
+.filters .filter { position: relative; z-index: 1; }
+.filters .filter.on { background: transparent; box-shadow: none; }
+@media (prefers-reduced-motion: reduce) { .filters .filter.on { background: var(--accent-grad); } .filters > .glider { display: none; } }
+.tabs > .glider { background: none; border-bottom: 2px solid transparent; border-image: var(--accent-grad) 1; }
+.tabs .tab { position: relative; z-index: 1; }
+.tabs .tab.active { border-image: none; border-bottom-color: transparent; }
+@media (prefers-reduced-motion: reduce) { .tabs .tab.active { border-image: var(--accent-grad) 1; } .tabs > .glider { display: none; } }
