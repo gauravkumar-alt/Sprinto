@@ -29,7 +29,6 @@ export const REAL_CASES: RealCase[] = [
   { domain: "rallly.co", certified: false, basis: "explicit", url: "https://rallly.co/security", quote: "Do you hold SOC 2 or ISO 27001 certification? Not currently." },
   { domain: "reflag.com", certified: false, preparing: true, basis: "explicit", url: "https://reflag.com/pricing", quote: "SOC2 (pending) … ISO27001 (pending)" },
   none("openpanel.dev"),
-  none("salespatriot.com"),
   none("re2.ai"),
   none("firstbase.io"),
   none("fondo.com"),
@@ -39,6 +38,8 @@ export const REAL_CASES: RealCase[] = [
   none("campfire.ai"),
 
   // ── Certified (quote from the company's own site) ──
+  // Corrected 2026-11-19: first labelled "none found"; its product page shows "Security · SOC 2 Type II".
+  yes("salespatriot.com", "https://salespatriot.com/product", "Security: SOC 2 Type II, US-hosted, ERP permissions."),
   yes("posthog.com", "https://posthog.com/handbook/company/security", "PostHog is certified as SOC 2 Type 2 compliant, following an external audit."),
   yes("documenso.com", "https://documenso.com/compliance", "SOC 2 — Compliant (ISO 27001 listed as planned)"),
   yes("e2b.dev", "https://e2b.dev/security", "E2B is SOC 2 Type II compliant and signs HIPAA BAAs on Enterprise plans."),

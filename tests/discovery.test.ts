@@ -113,3 +113,9 @@ describe("discovery: status tables", () => {
     expect(judgePages([page("https://x.io/compliance", "ISO 27001\nA standard.\nStatus: Planned (2026)")], "x.io").verdict).not.toBe("certified");
   });
 });
+
+describe("discovery: glued labels", () => {
+  it("sets aside a site whose text reads 'SecuritySOC 2 Type II'", () => {
+    expect(judgePages([page("https://salespatriot.com/product", "SecuritySOC 2 Type II, US-hosted, ERP permissions.")], "salespatriot.com").verdict).toBe("certified");
+  });
+});

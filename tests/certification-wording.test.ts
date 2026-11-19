@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decideQualification, type EvidenceLite } from "@/lib/pipeline/qualification";
+import { CERT_RE, decideQualification, showsCertificationHeld, type EvidenceLite } from "@/lib/pipeline/qualification";
 import { findings } from "./helpers";
 
 const ALL = new Set(["homepage", "product", "pricing", "about", "customers", "funding/news", "hiring", "enterprise", "security/compliance"]);
@@ -147,5 +147,18 @@ describe("outside sources", () => {
     const blog: EvidenceLite = { ref: "E41", type: "inference", text: "Third-party source reports: Acme is hiring a Security Engineer.", quote: "Security Engineer — Remote. We're hiring for this role.", url: "https://someblog.example/acme" };
     expect(status(run("x", {}, [board], { compliance_hiring: ["E40"] }), "compliance_hiring")).toBe("FOUND");
     expect(status(run("x", {}, [blog], { compliance_hiring: ["E41"] }), "compliance_hiring")).not.toBe("FOUND");
+  });
+});
+
+describe("labels glued together by the page", () => {
+  it("still sees 'SOC 2 Type II' after another word ('SecuritySOC 2 Type II')", () => {
+    expect(showsCertificationHeld("SecuritySOC 2 Type II, US-hosted, ERP permissions. We are SOC 2 Type II certified.", "product")).toBe(true);
+    expect(CERT_RE.test("SecuritySOC 2 Type II")).toBe(true);
+    expect(CERT_RE.test("associate 2 roles")).toBe(false);
+    // A bare badge counts as held, unless it's planned, negated or about helping others.
+    expect(showsCertificationHeld("SecuritySOC 2 Type II, US-hosted, ERP permissions.", "product")).toBe(true);
+    expect(showsCertificationHeld("SOC 2 Type II (in progress)", "security/compliance")).toBe(false);
+    expect(showsCertificationHeld("We help you pass your SOC 2 Type II audit", "product")).toBe(false);
+    expect(showsCertificationHeld("SOC 2 Type II", "blog")).toBe(false);
   });
 });

@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DiscoverPanel } from "@/components/discover";
 import { Collapse, CountUp, Fill, Pop, Reveal, focusSection, useGlider, useStaggerOnChange, useTilt } from "@/components/motion";
-import { Meter, Pips, ProviderChip, SourceBadge, StatusBadge, ThemeToggle, currentStepLabel, postJson, tone, type StageRow } from "@/components/ui";
+import { EmailBadge, Meter, Pips, ProviderChip, SourceBadge, StatusBadge, ThemeToggle, currentStepLabel, postJson, tone, type StageRow } from "@/components/ui";
 import { parseDomainCsv, parseDomainList } from "@/lib/security/domain";
 
 type Provider = { state: string; detail: string };
@@ -47,7 +47,8 @@ const FILTERS: [Filter, string][] = [
   ["qualified", "Qualified"],
   ["needs_review", "Needs review"],
   ["not_qualified", "Not qualified"],
-  ["sent", "Emailed"],
+  ["emailed", "Drafted"],
+  ["sent", "Sent"],
 ];
 const matches = (c: Company, f: Filter) =>
   f === "all" ? true : f === "emailed" ? Boolean(c.emailStatus) : f === "sent" ? ["sent", "simulated"].includes(c.emailStatus ?? "") : c.decision === f;
@@ -69,8 +70,8 @@ function whyLine(c: Company, status: string): string | null {
   if (dq.some((d) => d.startsWith("Outside target"))) return "Rejected: outside Sprinto's target";
   const f = new Set(c.found);
   const gaps: string[] = [];
-  if (!f.has("preparing_certification") && !f.has("compliance_hiring")) gaps.push("no SOC 2 prep");
-  if (!f.has("funding_series_ac") && !f.has("open_roles")) gaps.push("no funding/jobs found");
+  if (!f.has("preparing_certification") && !f.has("compliance_hiring")) gaps.push("not preparing for SOC 2");
+  if (!f.has("funding_series_ac") && !f.has("open_roles")) gaps.push("no funding or hiring found");
   if (!f.has("targets_enterprise") && !f.has("named_enterprise_customers")) gaps.push("no enterprise signal");
   if (!f.has("saas") || !f.has("b2b")) gaps.unshift("B2B SaaS not confirmed");
   const score = c.score ?? 0;
@@ -255,7 +256,7 @@ export default function Dashboard() {
         <Metric label="Qualified" value={m?.qualified} pct={share(m?.qualified)} tone="ok" on={filter === "qualified"} onClick={() => pick("qualified")} />
         <Metric label="Needs review" value={m?.needsReview} pct={share(m?.needsReview)} tone="warn" on={filter === "needs_review"} onClick={() => pick("needs_review")} />
         <Metric label="Not qualified" value={m?.notQualified} pct={share(m?.notQualified)} tone="bad" on={filter === "not_qualified"} onClick={() => pick("not_qualified")} />
-        <Metric label="Emails written" value={m?.emailsGenerated} pct={share(m?.emailsGenerated)} on={filter === "emailed"} onClick={() => pick("emailed")} />
+        <Metric label="Email drafts" value={m?.emailsGenerated} pct={share(m?.emailsGenerated)} on={filter === "emailed"} onClick={() => pick("emailed")} />
         <Metric
           label="Sent to your inbox"
           value={sentAll}
@@ -456,10 +457,10 @@ export default function Dashboard() {
                             onClick={(e) => { e.stopPropagation(); router.push(`/companies/${c.id}#qualification`); }}
                             title={`Business model ${c.breakdown.business}/30 · Growth ${c.breakdown.growth}/25 · Compliance ${c.breakdown.compliance}/35 · Enterprise ${c.breakdown.enterprise}/10 — click for evidence`}
                           >
-                            <span>{c.breakdown.business}</span>
-                            <span>{c.breakdown.growth}</span>
-                            <span className={c.breakdown.compliance ? "hot" : ""}>{c.breakdown.compliance}</span>
-                            <span>{c.breakdown.enterprise}</span>
+                            <span><b>{c.breakdown.business}</b><small>Fit</small></span>
+                            <span><b>{c.breakdown.growth}</b><small>Growth</small></span>
+                            <span className={c.breakdown.compliance ? "hot" : ""}><b>{c.breakdown.compliance}</b><small>SOC 2</small></span>
+                            <span><b>{c.breakdown.enterprise}</b><small>Enterp.</small></span>
                           </button>
                         ) : (
                           <span className="faint" title="Assessed with the previous rubric — re-run to see the breakdown">—</span>
@@ -497,10 +498,10 @@ export default function Dashboard() {
                         const canReview = !data?.readOnly && (c.decision ?? c.status) === "needs_review" && status !== "running" && status !== "queued";
                         return (
                           <td data-label={canReview ? "Your decision" : "Email"} data-empty={(!c.emailStatus && !canReview) || undefined}>
-                            {sentEarlier(c) ? <span className="badge b-mute" title="Sent under an earlier scoring; this company no longer qualifies">Sent earlier</span> : c.emailStatus ? <StatusBadge status={c.emailStatus} /> : !canReview && <span className="faint pending-label">{notYet(c, status)}</span>}
+                            {sentEarlier(c) ? <span className="badge b-mute" title="Sent under an earlier scoring; this company no longer qualifies">Sent earlier</span> : c.emailStatus ? <EmailBadge status={c.emailStatus} /> : !canReview && <span className="faint pending-label">{notYet(c, status)}</span>}
                             {canReview && (
                               <div className="row-review">
-                                <button className="mini mini-ok" onClick={(e) => { e.stopPropagation(); setReview({ c, kind: "approve" }); }} title="Approve: find the decision-maker and write the email (to your inbox only)">✓ Approve</button>
+                                <button className="mini mini-ok" disabled={!c.contactName} onClick={(e) => { e.stopPropagation(); setReview({ c, kind: "approve" }); }} title={c.contactName ? "Approve: send this email draft to your inbox" : "No decision-maker found yet: open the company and use Add contact first"}>✓ Approve</button>
                                 <button className="mini mini-bad" onClick={(e) => { e.stopPropagation(); setReview({ c, kind: "reject" }); }} title="Reject: mark not qualified">✕ Reject</button>
                               </div>
                             )}
@@ -513,13 +514,12 @@ export default function Dashboard() {
               </tbody>
             </table>
             <div className="legend">
-              <span><b>Breakdown</b> business /30 · growth /25 · compliance /35 · enterprise /10</span>
-              <span>Click a score for its evidence</span>
-              {m && m.llmCalls > 0 && <span>{m.llmCalls} AI calls{m.llmCostUsd > 0 ? ` · ~$${m.llmCostUsd.toFixed(2)}` : ""}</span>}
+              <span><b>Breakdown</b> business fit /30 · growth /25 · SOC 2 need /35 · enterprise /10</span>
+              <span>Click a score to see the quotes behind it</span>
             </div>
           </div>
         ) : (
-          <div className="empty">No companies yet.</div>
+          <div className="empty">{data ? "No companies yet. Click “+ Run on new companies” to start." : "Loading…"}</div>
         )}
       </section>
       {review && (
@@ -589,7 +589,7 @@ function ReviewDialog({ company, kind, onClose, onDone }: { company: Company; ki
             style={{ width: "100%", marginTop: 12 }}
           />
           <p className="sub" style={{ margin: "8px 0 0" }}>
-            {mode === "approve" ? "The agent will find the decision-maker, write two pain points and the email. It is delivered only to your own inbox." : "The company is marked not qualified. Nothing further runs or is sent."}
+            {mode === "approve" ? "The agent writes the final email and sends it to your own inbox (never to the company)." : "The company is marked not qualified. Its details stay; nothing is sent."}
           </p>
           {err && <div className="notice n-bad" style={{ marginTop: 10 }}>{err}</div>}
           <div className="row" style={{ marginTop: 14, justifyContent: "flex-end" }}>

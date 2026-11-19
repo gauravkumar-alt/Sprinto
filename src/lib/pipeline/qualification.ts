@@ -22,7 +22,8 @@ export interface EvidenceLite {
 }
 
 // "SOC 2", "SOC2", "SOC-2", "SOC II", "SOC two"; ISO 27001/27701; HIPAA; PCI DSS; FedRAMP; HITRUST.
-export const CERT_RE = /\bsoc\s*-?\s*(2|ii|two)\b|\biso\s*-?\s*2700[1-9]|\bhipaa\b|\bpci[\s-]*dss\b|\bfedramp\b|\bhitrust\b/i;
+// "SOC" may be glued to the previous word when a page's labels run together ("SecuritySOC 2 Type II").
+export const CERT_RE = /(?<![0-9])soc\s*-?\s*(2|ii|two)\b|\biso\s*-?\s*2700[1-9]|\bhipaa\b|\bpci[\s-]*dss\b|\bfedramp\b|\bhitrust\b/i;
 /** Work toward a certification that is not finished. Word-bounded so "Enterprise plan" or "Start a free trial" don't match. */
 export const PREP_RE =
   /\bprepar(e|es|ing|ation)\b|\bpursu(e|es|ing)\b|\bplan(s|ned|ning)? (to|for|on)\b|\bplanned\b|\bworking (to|towards?|on)\b|\bin progress\b|\bpending\b|\bunderway\b|\broad\s*map\b|\bexpect(ed|s|ing)?\b|\bupcoming\b|\bcoming soon\b|\bin the process\b|\bon track\b|\bkick(s|ed|ing)? off\b|\bin flight\b|\bstart(ed|ing)? (our|the|an?) (soc|iso|audit|certification|compliance)|\b(soc|iso|hipaa|audit)[^.]{0,25}\b(this|next) (quarter|year|month)\b|\btowards?\b/i;
@@ -73,7 +74,10 @@ function quoteFits(id: CriterionId, quote: string, pageTag: string | null | unde
 /** A quote shows a certification is already held (not planned, negated, or about customers). */
 export function showsCertificationHeld(quote: string, pageTag?: string | null): boolean {
   if (ARTICLE_PAGES.has(pageTag ?? "")) return false;
-  if (!CERT_RE.test(quote) || !HELD_RE.test(quote) || NOT_HELD_RE.test(quote) || HELPS_OTHERS_RE.test(quote)) return false;
+  // A bare "SOC 2 Type II" badge on the company's own page counts as held (as in the company finder),
+  // still subject to the planned / negated / helps-others checks below.
+  const badge = /(?<![0-9])soc\s*-?\s*(2|ii|two)\s*,?\s*type\s*(ii|2|i|1)\b/i.test(quote);
+  if (!CERT_RE.test(quote) || !(HELD_RE.test(quote) || badge) || NOT_HELD_RE.test(quote) || HELPS_OTHERS_RE.test(quote)) return false;
   // "preparing for our SOC 2 attestation": planned, unless it also states something already completed.
   if (PREP_RE.test(quote) && !/\b(achieved|completed|passed|holds?|is (soc|iso)[^.]{0,20}certified|are (soc|iso)[^.]{0,20}certified|(is|are) certified)\b/i.test(quote)) return false;
   return true;

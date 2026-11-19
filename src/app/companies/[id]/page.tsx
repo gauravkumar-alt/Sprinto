@@ -3,7 +3,7 @@ import Link from "next/link";
 import { use, useCallback, useEffect, useState } from "react";
 import gsap from "gsap";
 import { CountUp, Fill, Pop, Reveal, reducedMotion, useGlider } from "@/components/motion";
-import { Refs, SourceBadge, StageList, StatusBadge, ThemeToggle, postJson } from "@/components/ui";
+import { EmailBadge, Refs, SourceBadge, StageList, StatusBadge, ThemeToggle, postJson } from "@/components/ui";
 import type { CompanyProfile, QualificationResult } from "@/lib/schemas";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -161,6 +161,7 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
       {q?.decision === "needs_review" && !running && !d.readOnly && (
         <Pop>
         <ReviewBox
+          hasContact={Boolean(selected)}
           onApprove={(note) => act({ action: "approve", note }, "Approved — finding the decision-maker and writing the email (sent only to your inbox)…")}
           onReject={(note) => act({ action: "reject", note }, "Rejected — marked not qualified. Nothing will be sent.")}
         />
@@ -170,14 +171,14 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
       {/* Result banner: the whole story in one line */}
       <div className="hero" data-reveal>
         <div>
-          <div className="k">ICP score</div>
+          <div className="k">Fit score</div>
           <div className="v">{q ? <><CountUp value={q.fit_score} />/100</> : "—"}</div>
           <div className="s">{q ? <StatusBadge status={q.decision} /> : "Not assessed"}</div>
         </div>
         <div>
           <div className="k">Decision-maker</div>
           <div className="v ellipsis">{selected?.name ?? "—"}</div>
-          <div className="s ellipsis">{selected ? `${selected.title}${earlier ? " · earlier run" : ""}` : "Not found"}</div>
+          <div className="s ellipsis">{selected ? selected.title : "Not found"}</div>
           {selected?.business_email && <div className="contact-email ellipsis" title="Found by Hunter — stored only, never emailed">{selected.business_email}{selected.verification_status === "valid" && <span className="verified">✓</span>}</div>}
         </div>
         <div>
@@ -194,8 +195,8 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
         </div>
         <div>
           <div className="k">Email</div>
-          <div className="v">{send ? (earlier ? <span className="badge b-mute">Sent earlier</span> : <StatusBadge status={send.status} />) : email ? <StatusBadge status={email.status} /> : "—"}</div>
-          <div className="s ellipsis">{send?.completed_at ? (earlier ? "Under earlier scoring" : fmt(send.completed_at)) : email ? `Validation: ${email.validation_status}` : "Not written"}</div>
+          <div className="v">{send ? (earlier ? <span className="badge b-mute">Sent earlier</span> : <StatusBadge status={send.status} />) : email ? <EmailBadge status={email.status} /> : "—"}</div>
+          <div className="s ellipsis">{send?.completed_at ? (earlier ? "Under earlier scoring" : fmt(send.completed_at)) : email ? (email.validation_status === "PASS" ? "Quality check passed" : "Didn't pass the quality check") : "Not written"}</div>
         </div>
       </div>
 
@@ -253,7 +254,7 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
                 <div className="row"><span className="score" style={{ fontSize: 22 }}>{q.fit_score}/100</span><StatusBadge status={q.decision} /></div>
                 <div className="row">
                   <span className="faint">Confidence {Math.round(q.confidence * 100)}%</span>
-                  {q.categories && <a className="btn btn-sm" href={`/api/companies/${id}/qualification`} target="_blank" rel="noreferrer">JSON</a>}
+                  {q.categories && <a className="btn btn-sm" href={`/api/companies/${id}/qualification`} target="_blank" rel="noreferrer" title="The full score sheet as raw data">Raw data</a>}
                 </div>
               </div>
               <p style={{ margin: 0 }} title={q.explanation}>{verdict(q)}</p>
@@ -429,7 +430,7 @@ export default function CompanyPage({ params }: { params: Promise<{ id: string }
                 <div className="avatar">{initials(selected.name)}</div>
                 <div>
                   <div className="row" style={{ gap: 6 }}><b style={{ fontSize: 16 }}>{selected.name}</b>{selected.data_source === "mock" && <span className="badge b-mock">Mock</span>}</div>
-                  <div className="sub">{selected.title}{selected.department ? ` · ${selected.department}` : ""}</div>
+                  <div className="sub">{selected.title}{selected.department ? ` · ${selected.department.length <= 3 ? selected.department.toUpperCase() : selected.department}` : ""}</div>
                 </div>
                 <span className="spacer" />
                 <span className="badge b-mute">{Math.round(selected.confidence * 100)}% confidence</span>
@@ -558,20 +559,20 @@ function Why({ q, a, full }: { q: string; a: string; full?: string }) {
 }
 
 function Signals({ s, onRef }: { s: { summary: string; evidence_ids: string[] }[]; onRef: (r: string) => void }) {
-  if (!s?.length) return <span className="faint">None</span>;
+  if (!s?.length) return <span className="faint">Not found</span>;
   return <ul className="list-tight" style={{ marginTop: 0 }}>{s.map((x, i) => <li key={i}>{x.summary} <Refs ids={x.evidence_ids} onClick={onRef} /></li>)}</ul>;
 }
 
 /** Human decision for a "needs review" company: approve (continue to contact + email) or reject. */
-function ReviewBox({ onApprove, onReject }: { onApprove: (note: string) => void; onReject: (note: string) => void }) {
+function ReviewBox({ onApprove, onReject, hasContact }: { onApprove: (note: string) => void; onReject: (note: string) => void; hasContact: boolean }) {
   const [note, setNote] = useState("");
-  const ok = note.trim().length >= 5;
+  const ok = note.trim().length >= 5 && hasContact;
   return (
     <section className="panel review-box" data-reveal>
       <div>
         <h2>Your decision</h2>
         <p className="sub" style={{ margin: "4px 0 0" }}>
-          The agent couldn&apos;t decide on its own. Approve to find the decision-maker and write the email (delivered only to your inbox), or reject to close it.
+          The agent couldn&apos;t decide on its own. <b>Approve</b> writes the final email and sends it to your own inbox (never to the company). <b>Reject</b> marks it not a fit; its details stay.
         </p>
       </div>
       <div className="row review-actions">
@@ -582,7 +583,7 @@ function ReviewBox({ onApprove, onReject }: { onApprove: (note: string) => void;
           onChange={(e) => setNote(e.target.value)}
           aria-label="Reason for your decision"
         />
-        <button className="btn btn-approve" disabled={!ok} title={ok ? "Approve and continue" : "Write a reason (5+ characters) to approve"} onClick={() => onApprove(note.trim())}>
+        <button className="btn btn-approve" disabled={!ok} title={!hasContact ? "No decision-maker yet: add one in the Contact tab first" : ok ? "Approve and send" : "Write a reason (5+ characters) to approve"} onClick={() => onApprove(note.trim())}>
           ✓ Approve
         </button>
         <button className="btn btn-reject" onClick={() => onReject(note.trim())}>

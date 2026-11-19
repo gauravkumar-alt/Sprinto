@@ -285,7 +285,7 @@ details > summary { cursor: pointer; color: var(--muted); font-size: 13px; }
 
 /* rubric breakdown (table) */
 .breakdown { display: inline-flex; gap: 3px; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; }
-.breakdown span { min-width: 24px; text-align: center; padding: 1px 4px; border-radius: 5px; background: var(--panel-2); border: 1px solid var(--border); color: var(--muted); }
+.breakdown span { min-width: 34px; display: inline-grid; justify-items: center; line-height: 1.15; text-align: center; padding: 2px 4px; border-radius: 5px; background: var(--panel-2); border: 1px solid var(--border); color: var(--muted); }
 .breakdown span.hot { background: var(--ok-bg); color: var(--ok); border-color: transparent; }
 .breakdown span { background: transparent; }
 
@@ -406,3 +406,6 @@ td.c-why { min-width: 170px; max-width: 240px; font-size: 12.5px; line-height: 1
 .seg button { height: 30px; padding: 0 14px; border: 0; border-radius: 999px; background: transparent; font: inherit; font-size: 13px; font-weight: 650; color: var(--muted); cursor: pointer; }
 .seg button.on.ok { background: var(--ok); color: #fff; }
 .seg button.on.bad { background: var(--bad); color: #fff; }
+
+.breakdown small { font-size: 9px; font-weight: 600; color: var(--faint); letter-spacing: .01em; }
+.mini:disabled { opacity: .45; cursor: not-allowed; }

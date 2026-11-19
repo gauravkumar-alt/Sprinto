@@ -42,8 +42,21 @@ export function tone(status: string | null | undefined): "ok" | "warn" | "bad" |
   return "warn";
 }
 
+/** Only demo (made-up) companies get a badge; real ones need no label. */
 export function SourceBadge({ source }: { source: string | null | undefined }) {
-  return source === "mock" ? <span className="badge b-mock" title="Fictional fixture data">Mock</span> : <span className="badge b-real" title="Real website, contact and model data">Real</span>;
+  return source === "mock" ? <span className="badge b-mock" title="Fictional demo company, not real research">Demo</span> : null;
+}
+
+/** Email status in plain words. "Review" is kept for companies; an email that failed its check "needs edit". */
+const EMAIL: Record<string, [string, string]> = {
+  needs_review: ["b-warn", "Needs edit"],
+  validated: ["b-info", "Draft ready"],
+  generated: ["b-info", "Draft"],
+  failed: ["b-bad", "Send failed"],
+};
+export function EmailBadge({ status }: { status: string | null | undefined }) {
+  if (status && EMAIL[status]) return <span className={`badge ${EMAIL[status][0]}`}>{EMAIL[status][1]}</span>;
+  return <StatusBadge status={status} />;
 }
 
 const LABEL: Record<PipelineStage, string> = {
@@ -124,8 +137,8 @@ export function Refs({ ids, onClick }: { ids: string[] | undefined; onClick?: (i
   return (
     <>
       {ids.map((id) => (
-        <span key={id} className="ref" onClick={() => onClick?.(id)} title="Show evidence">
-          {id}
+        <span key={id} className="ref" onClick={() => onClick?.(id)} title={`Show the quote (${id})`}>
+          quote {ids.length > 1 ? ids.indexOf(id) + 1 : ""}
         </span>
       ))}
     </>

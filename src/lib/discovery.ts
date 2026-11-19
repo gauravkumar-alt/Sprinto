@@ -113,7 +113,7 @@ const sentencesOf = (text: string) =>
     .map((s) => s.trim())
     .filter((s) => s.length > 3 && s.length < 400);
 /** "SOC 2 Type II" as a badge or label, without a verb. */
-const BADGE_RE = /\bsoc\s*-?\s*(2|ii|two)\s*(type\s*(ii|2|i|1)\b)/i;
+const BADGE_RE = /(?<![0-9])soc\s*-?\s*(2|ii|two)\s*(type\s*(ii|2|i|1)\b)/i;
 const NEGATED = /\bnot (yet )?(soc|iso|certified|compliant)|\bno soc\b|\bisn'?t\b|\bnot currently\b/i;
 /** About the company's hosting or vendors ("our cloud providers are SOC 2 certified"), not the company itself. */
 const SOMEONE_ELSE = /\b(providers?|vendors?|sub-?processors?|data ?cent(er|re)s?|aws|amazon web services|google cloud|gcp|azure|stripe|partners?)\b/i;

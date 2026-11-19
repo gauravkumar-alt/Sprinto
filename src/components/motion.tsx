@@ -60,26 +60,32 @@ export function Reveal({ ready, children, className }: { ready: boolean; childre
   );
 }
 
-/** A number that counts up to its value (and animates between later values). */
+/**
+ * A number that counts up to its value (and animates between later values). The real value is always
+ * rendered first and restored at the end, so a skipped or interrupted animation can never leave a wrong number.
+ */
 export function CountUp({ value }: { value: number | undefined }) {
   const ref = useRef<HTMLSpanElement>(null);
   const last = useRef(0);
   useEffect(() => {
     const el = ref.current;
     if (!el || value === undefined) return;
-    if (reducedMotion()) {
-      el.textContent = String(value);
-      last.current = value;
-      return;
-    }
-    const o = { n: last.current };
-    const tween = gsap.to(o, { n: value, duration: 0.9, ease: "power2.out", onUpdate: () => (el.textContent = String(Math.round(o.n))) });
+    const done = () => {
+      if (ref.current) ref.current.textContent = String(value);
+    };
+    const from = last.current;
     last.current = value;
+    if (reducedMotion() || from === value) return done();
+    const o = { n: from };
+    const tween = gsap.to(o, { n: value, duration: 0.9, ease: "power2.out", onUpdate: () => (el.textContent = String(Math.round(o.n))), onComplete: done });
+    const safety = window.setTimeout(done, 1200); // if the animation never runs (e.g. a background tab)
     return () => {
       tween.kill();
+      window.clearTimeout(safety);
+      done();
     };
   }, [value]);
-  return <span ref={ref}>{value === undefined ? "–" : 0}</span>;
+  return <span ref={ref}>{value === undefined ? "–" : value}</span>;
 }
 
 /** A bar fill whose width animates from 0 (or its previous width) to `pct`. */
