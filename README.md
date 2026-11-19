@@ -131,6 +131,8 @@ LLM_EFFORT=medium               # low | medium | high
 ```
 **Gemini instead of Claude:** set `LLM_PROVIDER=gemini` and a Google AI Studio key in `LLM_API_KEY` (or `GEMINI_API_KEY`). The default model is `gemini-3.6-flash` (the newest Flash that reliably answers on free-tier keys at the time of writing); `LLM_FALLBACK_MODELS` (default `gemini-3.5-flash,gemini-3.5-flash-lite`) are tried in order when a model is overloaded (503), out of quota (429) or times out, and an unavailable model is skipped for 5 minutes. The model that actually answered is logged per call. Use `BATCH_CONCURRENCY=1` on the free tier.
 
+**Backup model:** set `LLM_BACKUP_PROVIDER` (`anthropic` or `gemini`), `LLM_BACKUP_API_KEY` and optionally `LLM_BACKUP_MODEL` (default `claude-opus-5-5`; `claude-haiku-5-5` is the cheapest Claude option). Whenever the main model fails (free-tier quota used up, overloaded, timed out, key rejected) or declines, the same request goes to the backup, so a quota limit no longer stops runs. With a backup, Gemini skips its long overload waits and hands over immediately. The dashboard's AI chip shows both models, and each logged call records which one answered.
+
 Structured outputs are used so the model must return schema-shaped JSON; responses are still validated with Zod and retried once (`LLM_MAX_JSON_RETRIES`). Token usage and estimated cost per call are logged and shown. A typical qualified company costs roughly 7–12 model calls.
 
 ### Hunter.io
@@ -180,7 +182,19 @@ npm run typecheck
 npm run lint
 npm run build
 npm run eval        # accuracy eval with the real LLM (see below)
+npm run eval:real   # real-company "already certified?" eval, no AI (see below)
 ```
+
+### Finding fit companies (dashboard → "Find fit companies")
+Most startups that look like Sprinto prospects already hold SOC 2, so researching random domains wastes time and AI quota. This step screens candidates first, with no AI:
+1. Candidates come from the public YC company directory (the [yc-oss](https://github.com/yc-oss/api) JSON mirror of ycombinator.com/companies), filtered to active B2B/SaaS companies that are hiring and have 15–300 people (roughly Series A–C). Compliance-automation vendors (competitors) are skipped.
+2. Each candidate's own site (homepage plus its four best pages: security/trust, pricing, enterprise…) is read with the same robots.txt-aware crawler.
+3. Companies whose site already shows SOC 2 / ISO 27001 / HIPAA / similar are set aside with the quote; those working toward one are flagged "Working toward SOC 2"; the rest are suggested. You tick the ones you want and add them to the run list; nothing runs on its own. Each click screens 20 new companies (~45 s); screened companies are never screened twice.
+
+### Real-company eval (`npm run eval:real`)
+[`eval/real-companies.ts`](eval/real-companies.ts) holds 55 real companies labelled by hand on 2026-11-19 from their own pages: 44 certified (each with the quote and URL) and 11 not certified (two explicit, nine with no certification anywhere on the homepage, security page or trust subdomain). Companies with unclear evidence were left out. The script runs the website screen on each live site (free, no AI) and also compares the full agent's stored decisions for any of these companies already run.
+
+Current result: **54/55 (98%)** — 43/44 certified companies caught, 11/12 suggestions are real fits, no real fit wrongly set aside. The remaining miss (PostHog) states its SOC 2 only deep in its handbook. Building this set found and fixed: a question and its "Not currently." answer read as one sentence, certifications listed only on pricing/enterprise pages, non-English statements ("certificados"), a company's own "we achieved SOC 2" blog post, and the page extractor dropping repeated status labels ("Status: Compliant" under each certification), which also affected the full agent. Live sites change, so check a failing case's URL before changing code.
 
 ### Accuracy eval (`npm run eval`)
 [`eval/qualification-cases.ts`](eval/qualification-cases.ts) holds 14 labelled fictional companies (`.example`, nothing real is contacted), each with the decision a careful analyst would reach. They include the traps that break keyword matching: "not yet SOC 2 certified", "not just compliant — certified", ISO held but SOC 2 planned, a compliance vendor that *helps others* get SOC 2, a B2C app, an agency, hardware, a borderline company and a prompt-injection page. The eval runs the real research and qualification prompts plus the deterministic rubric and reports per-case results (`data/eval-results.json`). Add a case whenever a live run gets something wrong.

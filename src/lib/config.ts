@@ -41,6 +41,19 @@ export function getConfig() {
       maxJsonRetries: num("LLM_MAX_JSON_RETRIES", 1),
       timeoutMs: num("LLM_TIMEOUT_MS", isGemini ? 75_000 : 120_000),
       refusalFallback: str("LLM_REFUSAL_FALLBACK", "true") !== "false",
+      /**
+       * A second provider used when the primary one fails (out of quota, overloaded, down, key rejected).
+       * Example: primary Gemini free tier + backup Claude, so a quota limit doesn't stop runs.
+       */
+      backup: (() => {
+        const provider = str("LLM_BACKUP_PROVIDER", "").toLowerCase();
+        const gemini = provider === "gemini";
+        return {
+          provider, // "anthropic" | "gemini" | "" (none)
+          apiKey: str("LLM_BACKUP_API_KEY") || (provider === "anthropic" ? str("ANTHROPIC_API_KEY") : gemini ? str("GEMINI_API_KEY") : ""),
+          model: str("LLM_BACKUP_MODEL", gemini ? "gemini-3.5-flash" : "claude-opus-5-5"),
+        };
+      })(),
     },
 
     research: {

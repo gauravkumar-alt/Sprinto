@@ -59,11 +59,13 @@ export function extractHtml(html: string, baseUrl: string, maxChars: number): Ex
     .split("\n")
     .map((l) => l.replace(/\s+/g, " ").trim())
     .filter((l) => l.length > 1);
-  // drop exact duplicate lines (repeated widgets, carousels)
+  // Drop exact duplicate lines (repeated widgets, carousels). Short labels that repeat on purpose
+  // ("Status: Compliant" under each certification, "Yes" in a comparison table) are kept, unless the
+  // same line repeats back to back.
   const seen = new Set<string>();
   const lines: string[] = [];
   for (const l of body) {
-    if (seen.has(l)) continue;
+    if (l.length < 40 ? lines[lines.length - 1] === l : seen.has(l)) continue;
     seen.add(l);
     lines.push(l);
   }

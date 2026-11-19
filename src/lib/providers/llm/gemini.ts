@@ -45,15 +45,23 @@ export class GeminiLLMProvider implements LLMProvider {
     private apiKey: string,
     private fetchImpl: typeof fetch = fetch,
     private overloadWaitsMs: number[] = [12_000, 30_000],
+    private opts: {
+      model?: string;
+      fallbackModels?: string[];
+      /** A backup provider exists: fail at once when every model is cooling down instead of retrying them. */
+      failFast?: boolean;
+    } = {},
   ) {
-    this.model = this.cfg.model;
+    this.model = opts.model ?? this.cfg.model;
   }
 
   async complete<T>(req: LLMRequest<T>): Promise<LLMRawResponse> {
     // Overloaded (503) or out-of-quota (429) models fall through to the configured fallbacks.
-    const all = [this.model, ...this.cfg.fallbackModels.filter((m) => m !== this.model)];
+    const fallbacks = this.opts.fallbackModels ?? this.cfg.fallbackModels;
+    const all = [this.model, ...fallbacks.filter((m) => m !== this.model)];
     const now = Date.now();
     const available = all.filter((m) => (cooldownUntil.get(m) ?? 0) <= now);
+    if (!available.length && this.opts.failFast) throw new TransientError("Every Gemini model is out of quota or overloaded right now");
     const models = available.length ? available : all; // if everything is cooling down, try them all anyway
     let res!: { status: number; json: GeminiResponse; model: string };
     for (const model of models) {

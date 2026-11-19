@@ -13,6 +13,7 @@ import { GmailEmailProvider, getStoredRefreshToken } from "./email/gmail";
 import { MockEmailProvider } from "./email/mock";
 import type { EmailProvider } from "./email/types";
 import { AnthropicLLMProvider } from "./llm/anthropic";
+import { FallbackLLMProvider } from "./llm/fallback";
 import { GeminiLLMProvider } from "./llm/gemini";
 import { MockLLMProvider } from "./llm/mock";
 import type { LLMProvider } from "./llm/types";
@@ -69,12 +70,24 @@ export function getProvidersFor(domain: string): ProviderSet {
   };
 }
 
+function backupLLM(): LLMProvider | null {
+  const { provider, apiKey, model } = getConfig().llm.backup;
+  if (!apiKey) return null;
+  // The backup gets its own longer timeout; a Gemini backup uses only its own model (no further fallbacks).
+  if (provider === "anthropic") return new AnthropicLLMProvider(apiKey, { model, timeoutMs: 120_000 });
+  if (provider === "gemini") return new GeminiLLMProvider(apiKey, fetch, [12_000, 30_000], { model, fallbackModels: [] });
+  return null;
+}
+
 function realLLM(): LLMProvider | null {
   const { provider, apiKey } = getConfig().llm;
-  if (!apiKey) return null;
-  if (provider === "anthropic") return new AnthropicLLMProvider(apiKey);
-  if (provider === "gemini") return new GeminiLLMProvider(apiKey);
-  return null;
+  const backup = backupLLM();
+  let primary: LLMProvider | null = null;
+  if (apiKey && provider === "anthropic") primary = new AnthropicLLMProvider(apiKey);
+  // With a backup, Gemini skips its long overload waits and hands over straight away.
+  if (apiKey && provider === "gemini") primary = backup ? new GeminiLLMProvider(apiKey, fetch, [], { failFast: true }) : new GeminiLLMProvider(apiKey);
+  if (primary && backup) return new FallbackLLMProvider(primary, backup);
+  return primary ?? backup;
 }
 
 /** Configuration status for the dashboard (no secrets). */
@@ -84,7 +97,10 @@ export function providerStatus() {
   return {
     mode: cfg.mode,
     llm: realLLM()
-      ? { state: "real", detail: `${cfg.llm.provider} · ${cfg.llm.model}` }
+      ? {
+          state: "real",
+          detail: `${cfg.llm.provider} · ${cfg.llm.model}${backupLLM() ? ` · backup ${cfg.llm.backup.provider} · ${cfg.llm.backup.model}` : ""}`,
+        }
       : {
           state: cfg.mode === "demo" ? "mock" : "missing",
           detail: cfg.llm.apiKey ? `Unsupported LLM_PROVIDER "${cfg.llm.provider}" (use anthropic or gemini)` : "LLM_API_KEY not set",

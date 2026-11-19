@@ -347,3 +347,12 @@ td.c-why { min-width: 170px; max-width: 240px; font-size: 12.5px; line-height: 1
 .source.outside .kind { color: var(--accent); }
 .source .host { font-size: 11.5px; color: var(--faint); font-family: var(--mono); }
 @media (max-width: 520px) { .source { grid-template-columns: 54px minmax(0, 1fr); } .source .host { display: none; } }
+
+/* Find fit companies */
+.discover-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.discover-list li label { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 12px; background: var(--panel-2); border: 1px solid var(--border); cursor: pointer; }
+.discover-list li label:hover { border-color: var(--accent); }
+.discover-list input { margin-top: 3px; accent-color: var(--accent); }
+.d-main { display: grid; gap: 2px; min-width: 0; }
+.d-name { font-weight: 650; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.d-why { font-size: 12.5px; color: var(--text); opacity: .8; overflow-wrap: anywhere; }

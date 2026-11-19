@@ -17,9 +17,9 @@ export class AnthropicLLMProvider implements LLMProvider {
   private client: Anthropic;
   private cfg = getConfig().llm;
 
-  constructor(apiKey: string) {
-    this.model = this.cfg.model;
-    this.client = new Anthropic({ apiKey, timeout: this.cfg.timeoutMs, maxRetries: 2 });
+  constructor(apiKey: string, opts: { model?: string; timeoutMs?: number } = {}) {
+    this.model = opts.model ?? this.cfg.model;
+    this.client = new Anthropic({ apiKey, timeout: opts.timeoutMs ?? this.cfg.timeoutMs, maxRetries: 2 });
   }
 
   async complete<T>(req: LLMRequest<T>): Promise<LLMRawResponse> {

@@ -22,9 +22,9 @@ export interface EvidenceLite {
 }
 
 // "SOC 2", "SOC2", "SOC-2", "SOC II", "SOC two"; ISO 27001/27701; HIPAA; PCI DSS; FedRAMP; HITRUST.
-const CERT_RE = /\bsoc\s*-?\s*(2|ii|two)\b|\biso\s*-?\s*2700[1-9]|\bhipaa\b|\bpci[\s-]*dss\b|\bfedramp\b|\bhitrust\b/i;
+export const CERT_RE = /\bsoc\s*-?\s*(2|ii|two)\b|\biso\s*-?\s*2700[1-9]|\bhipaa\b|\bpci[\s-]*dss\b|\bfedramp\b|\bhitrust\b/i;
 /** Work toward a certification that is not finished. Word-bounded so "Enterprise plan" or "Start a free trial" don't match. */
-const PREP_RE =
+export const PREP_RE =
   /\bprepar(e|es|ing|ation)\b|\bpursu(e|es|ing)\b|\bplan(s|ned|ning)? (to|for|on)\b|\bplanned\b|\bworking (to|towards?|on)\b|\bin progress\b|\bpending\b|\bunderway\b|\broad\s*map\b|\bexpect(ed|s|ing)?\b|\bupcoming\b|\bcoming soon\b|\bin the process\b|\bon track\b|\bkick(s|ed|ing)? off\b|\bin flight\b|\bstart(ed|ing)? (our|the|an?) (soc|iso|audit|certification|compliance)|\b(soc|iso|hipaa|audit)[^.]{0,25}\b(this|next) (quarter|year|month)\b|\btowards?\b/i;
 const HELD_RE = /\bcertified\b|\bcompliant\b|\battested\b|\battestation report\b|\breport (is )?available\b|\baudited\b|\bachieved\b|\bholds?\b|\bmaintains?\b|\bpassed\b|\bcompleted\b|\b(is|are) soc\b|\btype (ii|2) report\b/i;
 /** "not yet SOC 2 certified", "no SOC 2 report", "isn't HIPAA compliant" — a certification that is explicitly NOT held. */

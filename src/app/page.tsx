@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { DiscoverPanel } from "@/components/discover";
 import { CountUp, Fill, Reveal, focusSection } from "@/components/motion";
 import { Meter, Pips, ProviderChip, SourceBadge, StatusBadge, ThemeToggle, currentStepLabel, postJson, tone, type StageRow } from "@/components/ui";
 import { parseDomainCsv, parseDomainList } from "@/lib/security/domain";
@@ -321,6 +322,10 @@ export default function Dashboard() {
         </section>
         )}
       </div>
+
+      {data && !data.readOnly && (
+        <DiscoverPanel onAdd={(lines) => setText((t) => [t.trim(), ...lines].filter(Boolean).join("\n"))} />
+      )}
 
       <section className="panel" style={{ marginTop: 16, scrollMarginTop: 16 }} ref={resultsRef} data-reveal>
         <div className="panel-head">

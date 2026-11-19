@@ -241,6 +241,19 @@ CREATE TABLE IF NOT EXISTS settings (
   value TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+
+-- Companies screened by "Find fit companies" (a cheap website check before the full agent run).
+CREATE TABLE IF NOT EXISTS discovered_companies (
+  domain TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  source TEXT NOT NULL,
+  verdict TEXT NOT NULL,          -- fit | preparing | certified | unreachable
+  reason TEXT NOT NULL,
+  quote TEXT,
+  quote_url TEXT,
+  details TEXT NOT NULL,          -- JSON: one-liner, team size, batch, location
+  screened_at TEXT NOT NULL
+);
 `;
 
 export function resolvePath(url: string): string {
